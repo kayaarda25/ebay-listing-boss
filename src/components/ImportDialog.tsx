@@ -144,6 +144,30 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
               } catch (aiErr) {
                 console.warn("AI optimization failed (product still saved):", aiErr);
               }
+
+              // Step 4: Generate AI product image
+              setStatus(`Erstelle AI-Produktbild für ${asin}...`);
+              try {
+                const { data: imgData, error: imgError } = await supabase.functions.invoke("generate-product-image", {
+                  body: {
+                    title: productData.title,
+                    asin,
+                  },
+                });
+
+                if (!imgError && imgData?.success && imgData.imageUrl) {
+                  const currentImages = Array.isArray(productData.images) ? productData.images : [];
+                  await supabase
+                    .from("source_products")
+                    .update({
+                      images_json: [imgData.imageUrl, ...currentImages],
+                    })
+                    .eq("seller_id", sellerId)
+                    .eq("source_id", asin);
+                }
+              } catch (imgErr) {
+                console.warn("AI image generation failed (product still saved):", imgErr);
+              }
             }
           }
         } else {
