@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Loader2, Package, AlertCircle, CheckCircle2 } from "lucide-react";
+import { calculateEbayPrice, type PricingConfig } from "@/components/PricingSettings";
 
 interface ImportDialogProps {
   open: boolean;
@@ -77,6 +78,19 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
       const { error: insertError } = await supabase.from("source_products").insert(rows);
       if (insertError) throw insertError;
 
+      // Fetch pricing settings for eBay price calculation
+      const { data: sellerData } = await supabase
+        .from("sellers")
+        .select("pricing_settings")
+        .eq("id", sellerId)
+        .maybeSingle();
+      const pricingConfig: PricingConfig = {
+        margin_percent: 20, shipping_cost: 4.99, ebay_fee_percent: 13,
+        paypal_fee_percent: 2.49, paypal_fee_fixed: 0.35, additional_costs: 0,
+        auto_sync_enabled: true, sync_interval_hours: 6,
+        ...(sellerData?.pricing_settings as unknown as PricingConfig || {}),
+      };
+
       // Step 2: Scrape product data from Amazon
       setStatus(`Lade Produktdaten von Amazon (${newAsins.length} Produkt(e))...`);
       let scrapedCount = 0;
@@ -97,6 +111,7 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
                   title: productData.title,
                   description: productData.description,
                   price_source: productData.price,
+                  price_ebay: productData.price ? calculateEbayPrice(productData.price, pricingConfig).ebayPrice : null,
                   stock_source: productData.availability?.toLowerCase().includes("auf lager") ? 1 : 0,
                   images_json: productData.images || [],
                   attributes_json: {

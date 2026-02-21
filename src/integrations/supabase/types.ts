@@ -235,6 +235,7 @@ export type Database = {
           id: string
           is_active: boolean
           marketplace: string
+          pricing_settings: Json
           refresh_token_enc: string | null
           token_scopes: string[] | null
           updated_at: string
@@ -246,6 +247,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           marketplace?: string
+          pricing_settings?: Json
           refresh_token_enc?: string | null
           token_scopes?: string[] | null
           updated_at?: string
@@ -257,6 +259,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           marketplace?: string
+          pricing_settings?: Json
           refresh_token_enc?: string | null
           token_scopes?: string[] | null
           updated_at?: string
@@ -323,7 +326,9 @@ export type Database = {
           id: string
           images_json: Json | null
           last_synced_at: string | null
+          price_ebay: number | null
           price_source: number | null
+          price_synced_at: string | null
           seller_id: string
           source_id: string
           source_type: string
@@ -338,7 +343,9 @@ export type Database = {
           id?: string
           images_json?: Json | null
           last_synced_at?: string | null
+          price_ebay?: number | null
           price_source?: number | null
+          price_synced_at?: string | null
           seller_id: string
           source_id: string
           source_type?: string
@@ -353,7 +360,9 @@ export type Database = {
           id?: string
           images_json?: Json | null
           last_synced_at?: string | null
+          price_ebay?: number | null
           price_source?: number | null
+          price_synced_at?: string | null
           seller_id?: string
           source_id?: string
           source_type?: string
