@@ -16,6 +16,10 @@ interface PricingConfig {
   additional_costs: number;
   auto_sync_enabled: boolean;
   sync_interval_hours: number;
+  // Price rules
+  pause_if_ek_above: number | null;
+  min_profit: number | null;
+  max_price_change_percent: number | null;
 }
 
 const DEFAULT_CONFIG: PricingConfig = {
@@ -27,6 +31,9 @@ const DEFAULT_CONFIG: PricingConfig = {
   additional_costs: 0,
   auto_sync_enabled: true,
   sync_interval_hours: 6,
+  pause_if_ek_above: null,
+  min_profit: null,
+  max_price_change_percent: null,
 };
 
 function calculateEbayPrice(amazonPrice: number, config: PricingConfig): {
@@ -116,7 +123,7 @@ export function PricingSettings() {
     }
   }
 
-  function updateField(field: keyof PricingConfig, value: number | boolean) {
+  function updateField(field: keyof PricingConfig, value: number | boolean | null) {
     setConfig((prev) => ({ ...prev, [field]: value }));
   }
 
@@ -228,6 +235,52 @@ export function PricingSettings() {
           </div>
         </div>
 
+        {/* Price Rules */}
+        <div className="rounded-2xl border border-border/60 bg-card p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Info className="w-4 h-4 text-primary" />
+            <h3 className="text-[14px] font-semibold text-foreground">Automatische Preisregeln</h3>
+          </div>
+          <p className="text-[13px] text-muted-foreground">
+            Regeln die beim Preis-Sync automatisch angewendet werden.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="text-[13px] font-medium text-foreground">Listing pausieren wenn EK über (€)</label>
+              <Input
+                type="number" min={0} step={0.01}
+                value={config.pause_if_ek_above ?? ""}
+                onChange={(e) => updateField("pause_if_ek_above", e.target.value ? Number(e.target.value) : null)}
+                placeholder="z.B. 50.00"
+                className="font-mono rounded-xl"
+              />
+              <p className="text-[11px] text-muted-foreground">Leer = deaktiviert</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[13px] font-medium text-foreground">Mindestgewinn pro Produkt (€)</label>
+              <Input
+                type="number" min={0} step={0.01}
+                value={config.min_profit ?? ""}
+                onChange={(e) => updateField("min_profit", e.target.value ? Number(e.target.value) : null)}
+                placeholder="z.B. 3.00"
+                className="font-mono rounded-xl"
+              />
+              <p className="text-[11px] text-muted-foreground">Pausiert Listing wenn Gewinn darunter fällt</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[13px] font-medium text-foreground">Max. Preisänderung pro Sync (%)</label>
+              <Input
+                type="number" min={0} step={1}
+                value={config.max_price_change_percent ?? ""}
+                onChange={(e) => updateField("max_price_change_percent", e.target.value ? Number(e.target.value) : null)}
+                placeholder="z.B. 20"
+                className="font-mono rounded-xl"
+              />
+              <p className="text-[11px] text-muted-foreground">Begrenzt Preissprünge bei Sync</p>
+            </div>
+          </div>
+        </div>
+
         {/* Example Calculation */}
         <div className="rounded-2xl border border-border/60 bg-card p-5 space-y-4">
           <div className="flex items-center gap-2">
@@ -254,5 +307,5 @@ export function PricingSettings() {
   );
 }
 
-export { calculateEbayPrice };
+export { calculateEbayPrice, DEFAULT_CONFIG as DEFAULT_PRICING };
 export type { PricingConfig };
