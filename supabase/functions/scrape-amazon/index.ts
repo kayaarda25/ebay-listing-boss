@@ -41,29 +41,27 @@ Deno.serve(async (req) => {
           },
           body: JSON.stringify({
             url,
-            formats: [
-              {
-                type: 'json',
-                schema: {
-                  type: 'object',
-                  properties: {
-                    title: { type: 'string', description: 'Product title' },
-                    price: { type: 'number', description: 'Current price in EUR as a number' },
-                    description: { type: 'string', description: 'Product description or bullet points combined' },
-                    images: {
-                      type: 'array',
-                      items: { type: 'string' },
-                      description: 'Array of product image URLs (high resolution)',
-                    },
-                    availability: { type: 'string', description: 'Stock availability text' },
-                    brand: { type: 'string', description: 'Brand name' },
-                    rating: { type: 'number', description: 'Average rating out of 5' },
-                    review_count: { type: 'number', description: 'Number of reviews' },
+            formats: ['extract'],
+            extract: {
+              schema: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string', description: 'Product title' },
+                  price: { type: 'number', description: 'Current price in EUR as a number' },
+                  description: { type: 'string', description: 'Product description or bullet points combined' },
+                  images: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Array of product image URLs (high resolution)',
                   },
-                  required: ['title'],
+                  availability: { type: 'string', description: 'Stock availability text' },
+                  brand: { type: 'string', description: 'Brand name' },
+                  rating: { type: 'number', description: 'Average rating out of 5' },
+                  review_count: { type: 'number', description: 'Number of reviews' },
                 },
+                required: ['title'],
               },
-            ],
+            },
             waitFor: 2000,
             location: { country: 'DE', languages: ['de'] },
           }),
@@ -72,7 +70,7 @@ Deno.serve(async (req) => {
         const data = await response.json();
 
         if (response.ok && data.success !== false) {
-          const extracted = data.data?.json || data.json || {};
+          const extracted = data.data?.extract || data.extract || data.data?.json || data.json || {};
           results[asin] = {
             success: true,
             title: extracted.title || `Amazon ${asin}`,
