@@ -230,6 +230,8 @@ export type Database = {
       }
       sellers: {
         Row: {
+          amazon_email: string | null
+          amazon_password_enc: string | null
           created_at: string
           ebay_user_id: string | null
           id: string
@@ -242,6 +244,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          amazon_email?: string | null
+          amazon_password_enc?: string | null
           created_at?: string
           ebay_user_id?: string | null
           id?: string
@@ -254,6 +258,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          amazon_email?: string | null
+          amazon_password_enc?: string | null
           created_at?: string
           ebay_user_id?: string | null
           id?: string
