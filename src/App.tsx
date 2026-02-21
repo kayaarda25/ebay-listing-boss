@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { ThemeProvider } from "@/hooks/useTheme";
 import Index from "./pages/Index";
 import ProductsPage from "./pages/Products";
 import ListingsPage from "./pages/Listings";
@@ -20,10 +21,8 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) {
     return (
-      <div className="dark">
-        <div className="min-h-screen bg-background flex items-center justify-center">
-          <div className="text-muted-foreground text-sm">Laden...</div>
-        </div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-muted-foreground text-sm">Laden...</div>
       </div>
     );
   }
@@ -45,7 +44,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <div className="dark">
+          <ThemeProvider>
             <Routes>
               <Route path="/auth" element={<AuthRoute />} />
               <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
@@ -56,7 +55,7 @@ const App = () => (
               <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
-          </div>
+          </ThemeProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
