@@ -1,5 +1,6 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { ImportDialog } from "@/components/ImportDialog";
+import { ProductDetailDialog } from "@/components/ProductDetailDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,6 +21,7 @@ const ProductsPage = () => {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<any>(null);
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products", sellerId],
@@ -98,18 +100,38 @@ const ProductsPage = () => {
               const availability = getAttr(p, "availability");
 
               return (
-                <div key={p.id} className="glass-card p-4 flex gap-4">
-                  {/* Image */}
-                  <div className="w-20 h-20 rounded-md border border-border bg-muted flex-shrink-0 overflow-hidden flex items-center justify-center">
+                <div
+                  key={p.id}
+                  className="glass-card p-4 flex gap-4 cursor-pointer hover:ring-1 hover:ring-primary/30 transition-all"
+                  onClick={() => setSelectedProduct(p)}
+                >
+                  {/* All Images */}
+                  <div className="flex gap-1.5 flex-shrink-0">
                     {images.length > 0 ? (
-                      <img
-                        src={images[0]}
-                        alt={p.title}
-                        className="w-full h-full object-contain"
-                        loading="lazy"
-                      />
+                      images.slice(0, 4).map((img, i) => (
+                        <div
+                          key={i}
+                          className={`rounded-md border border-border bg-muted overflow-hidden flex items-center justify-center ${
+                            i === 0 ? "w-20 h-20" : "w-14 h-14"
+                          }`}
+                        >
+                          <img
+                            src={img}
+                            alt={`${p.title} ${i + 1}`}
+                            className="w-full h-full object-contain"
+                            loading="lazy"
+                          />
+                        </div>
+                      ))
                     ) : (
-                      <ImageOff className="w-6 h-6 text-muted-foreground/40" />
+                      <div className="w-20 h-20 rounded-md border border-border bg-muted flex items-center justify-center">
+                        <ImageOff className="w-6 h-6 text-muted-foreground/40" />
+                      </div>
+                    )}
+                    {images.length > 4 && (
+                      <div className="w-14 h-14 rounded-md border border-border bg-muted flex items-center justify-center text-xs text-muted-foreground font-medium">
+                        +{images.length - 4}
+                      </div>
                     )}
                   </div>
 
@@ -170,6 +192,7 @@ const ProductsPage = () => {
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-primary hover:underline inline-flex items-center gap-1 ml-auto"
+                        onClick={(e) => e.stopPropagation()}
                       >
                         Amazon <ExternalLink className="w-3 h-3" />
                       </a>
@@ -188,6 +211,13 @@ const ProductsPage = () => {
           open={importOpen}
           onOpenChange={setImportOpen}
           onSuccess={() => queryClient.invalidateQueries({ queryKey: ["products"] })}
+        />
+
+        <ProductDetailDialog
+          product={selectedProduct}
+          open={!!selectedProduct}
+          onOpenChange={(open) => !open && setSelectedProduct(null)}
+          onUpdate={() => queryClient.invalidateQueries({ queryKey: ["products"] })}
         />
       </div>
     </DashboardLayout>
