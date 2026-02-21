@@ -4,16 +4,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
 import { toast } from "sonner";
-import { ExternalLink, Star, ImageOff, Sparkles, Loader2, Copy, Check } from "lucide-react";
+import { ExternalLink, Star, ImageOff, Sparkles, Loader2, Copy, Check, Trash2 } from "lucide-react";
 
 interface ProductDetailDialogProps {
   product: any;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onUpdate?: () => void;
+  onDelete?: (product: any) => void;
 }
 
-export function ProductDetailDialog({ product, open, onOpenChange, onUpdate }: ProductDetailDialogProps) {
+export function ProductDetailDialog({ product, open, onOpenChange, onUpdate, onDelete }: ProductDetailDialogProps) {
   const [optimizing, setOptimizing] = useState(false);
   const [optimizedTitle, setOptimizedTitle] = useState("");
   const [optimizedDesc, setOptimizedDesc] = useState("");
@@ -200,8 +201,23 @@ export function ProductDetailDialog({ product, open, onOpenChange, onUpdate }: P
                   Auf Amazon ansehen
                 </a>
               </Button>
-            </div>
           </div>
+
+          {/* Delete */}
+          {onDelete && (
+            <div className="pt-2 border-t border-border">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => onDelete(product)}
+              >
+                <Trash2 className="w-4 h-4" />
+                Produkt löschen
+              </Button>
+            </div>
+          )}
+        </div>
         </div>
       </DialogContent>
     </Dialog>

@@ -4,8 +4,19 @@ import { ProductDetailDialog } from "@/components/ProductDetailDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, ExternalLink, Package, Star, ImageOff } from "lucide-react";
+import { Search, Plus, ExternalLink, Package, Star, ImageOff, Trash2, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 async function fetchProducts(sellerId: string) {
   const { data } = await supabase
@@ -22,6 +33,28 @@ const ProductsPage = () => {
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete(product: any) {
+    if (!sellerId) return;
+    setDeleting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("delete-product", {
+        body: { productId: product.id, sellerId },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Löschen fehlgeschlagen");
+      toast.success(data.message);
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      setSelectedProduct(null);
+    } catch (err: any) {
+      toast.error(err.message || "Löschen fehlgeschlagen");
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  }
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products", sellerId],
@@ -159,12 +192,22 @@ const ProductsPage = () => {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="flex items-center gap-2 flex-shrink-0">
                         {p.price_source != null && (
                           <span className="text-lg font-semibold text-foreground font-mono">
                             €{Number(p.price_source).toFixed(2)}
                           </span>
                         )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteTarget(p);
+                          }}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          title="Produkt löschen"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
 
@@ -218,7 +261,33 @@ const ProductsPage = () => {
           open={!!selectedProduct}
           onOpenChange={(open) => !open && setSelectedProduct(null)}
           onUpdate={() => queryClient.invalidateQueries({ queryKey: ["products"] })}
+          onDelete={(product) => {
+            setSelectedProduct(null);
+            setDeleteTarget(product);
+          }}
         />
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Produkt löschen?</AlertDialogTitle>
+              <AlertDialogDescription>
+                <strong>{deleteTarget?.title}</strong> wird unwiderruflich gelöscht – inkl. aller verknüpften eBay-Listings, Inventory Items und gespeicherten Bilder.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>Abbrechen</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => deleteTarget && handleDelete(deleteTarget)}
+                disabled={deleting}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleting && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
+                {deleting ? "Lösche..." : "Endgültig löschen"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </DashboardLayout>
   );
