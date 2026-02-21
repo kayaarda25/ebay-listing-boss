@@ -9,8 +9,11 @@ import {
   ChevronLeft,
   ChevronRight,
   BoxesIcon,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { useState } from "react";
+import { useTheme } from "@/hooks/useTheme";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -24,6 +27,7 @@ const navItems = [
 export function AppSidebar() {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const { theme, toggleTheme } = useTheme();
 
   return (
     <aside
@@ -61,8 +65,16 @@ export function AppSidebar() {
         })}
       </nav>
 
-      {/* Collapse toggle */}
-      <div className="p-3 border-t border-sidebar-border">
+      {/* Theme toggle & Collapse */}
+      <div className="p-3 border-t border-sidebar-border space-y-0.5">
+        <button
+          onClick={toggleTheme}
+          className="nav-item nav-item-inactive w-full"
+          title={collapsed ? (theme === "dark" ? "Light Mode" : "Dark Mode") : undefined}
+        >
+          {theme === "dark" ? <Sun className="w-4 h-4 flex-shrink-0" /> : <Moon className="w-4 h-4 flex-shrink-0" />}
+          {!collapsed && <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>}
+        </button>
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="nav-item nav-item-inactive w-full justify-center"
