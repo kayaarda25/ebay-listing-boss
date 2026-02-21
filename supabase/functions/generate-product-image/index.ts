@@ -13,10 +13,10 @@ Deno.serve(async (req) => {
   try {
     const { title, asin } = await req.json();
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+    if (!OPENAI_API_KEY) {
       return new Response(
-        JSON.stringify({ success: false, error: 'LOVABLE_API_KEY nicht konfiguriert' }),
+        JSON.stringify({ success: false, error: 'OPENAI_API_KEY nicht konfiguriert' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -24,71 +24,52 @@ Deno.serve(async (req) => {
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    // Generate image using Lovable AI
     const prompt = `Professional e-commerce product photo on clean white background, studio lighting, high quality commercial photography of: ${title}. No text, no watermarks, no logos, no brand names visible.`;
 
-    console.log('Generating image for:', title);
+    console.log('Generating image via DALL-E for:', title);
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const dalleResponse = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash-image',
-        messages: [
-          { role: 'user', content: prompt }
-        ],
-        modalities: ['image', 'text'],
+        model: 'dall-e-3',
+        prompt,
+        n: 1,
+        size: '1024x1024',
+        response_format: 'b64_json',
       }),
     });
 
-    if (!aiResponse.ok) {
-      const errText = await aiResponse.text();
-      console.error('AI Gateway error:', aiResponse.status, errText);
+    if (!dalleResponse.ok) {
+      const errText = await dalleResponse.text();
+      console.error('DALL-E error:', dalleResponse.status, errText);
 
-      if (aiResponse.status === 429) {
+      if (dalleResponse.status === 429) {
         return new Response(
           JSON.stringify({ success: false, error: 'Rate limit erreicht, bitte später erneut versuchen' }),
           { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      if (aiResponse.status === 402) {
-        return new Response(
-          JSON.stringify({ success: false, error: 'Keine Credits mehr, bitte Credits aufladen' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
 
       return new Response(
-        JSON.stringify({ success: false, error: `AI-Fehler (${aiResponse.status})` }),
+        JSON.stringify({ success: false, error: `DALL-E Fehler (${dalleResponse.status})` }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const aiData = await aiResponse.json();
-    const imageData = aiData.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+    const dalleData = await dalleResponse.json();
+    const base64Data = dalleData.data?.[0]?.b64_json;
 
-    if (!imageData) {
-      console.error('No image in AI response:', JSON.stringify(aiData).slice(0, 500));
+    if (!base64Data) {
+      console.error('No image in DALL-E response');
       return new Response(
-        JSON.stringify({ success: false, error: 'Keine Bilddaten in AI-Antwort' }),
+        JSON.stringify({ success: false, error: 'Keine Bilddaten in DALL-E Antwort' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
-    // Extract base64 data
-    const base64Match = imageData.match(/^data:image\/(png|jpeg|webp);base64,(.+)$/);
-    if (!base64Match) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Ungültiges Bildformat' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const imageFormat = base64Match[1];
-    const base64Data = base64Match[2];
 
     // Decode base64 to binary
     const binaryString = atob(base64Data);
@@ -99,12 +80,12 @@ Deno.serve(async (req) => {
 
     // Upload to storage
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const fileName = `${asin || crypto.randomUUID()}-${Date.now()}.${imageFormat}`;
+    const fileName = `${asin || crypto.randomUUID()}-${Date.now()}.png`;
 
     const { error: uploadError } = await supabase.storage
       .from('product-images')
       .upload(fileName, bytes.buffer, {
-        contentType: `image/${imageFormat}`,
+        contentType: 'image/png',
         upsert: true,
       });
 
