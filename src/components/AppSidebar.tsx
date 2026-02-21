@@ -27,24 +27,24 @@ export function AppSidebar() {
 
   return (
     <aside
-      className={`fixed left-0 top-0 h-screen bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-200 z-50 ${
-        collapsed ? "w-16" : "w-60"
+      className={`fixed left-0 top-0 h-screen bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-300 ease-in-out z-50 ${
+        collapsed ? "w-[68px]" : "w-[240px]"
       }`}
     >
       {/* Logo */}
-      <div className="flex items-center gap-2 px-4 h-14 border-b border-sidebar-border">
-        <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center flex-shrink-0">
-          <Zap className="w-4 h-4 text-primary-foreground" />
+      <div className="flex items-center gap-3 px-5 h-16">
+        <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 shadow-apple-sm">
+          <Zap className="w-[18px] h-[18px] text-primary-foreground" />
         </div>
         {!collapsed && (
-          <span className="font-semibold text-sidebar-accent-foreground text-sm tracking-tight">
+          <span className="font-semibold text-foreground text-[15px] tracking-tight">
             SellerPilot
           </span>
         )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-3 px-2 space-y-1">
+      <nav className="flex-1 py-2 px-3 space-y-0.5">
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
           return (
@@ -54,7 +54,7 @@ export function AppSidebar() {
               className={`nav-item ${isActive ? "nav-item-active" : "nav-item-inactive"}`}
               title={collapsed ? item.label : undefined}
             >
-              <item.icon className="w-4 h-4 flex-shrink-0" />
+              <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
               {!collapsed && <span>{item.label}</span>}
             </Link>
           );
@@ -62,7 +62,7 @@ export function AppSidebar() {
       </nav>
 
       {/* Collapse toggle */}
-      <div className="p-2 border-t border-sidebar-border">
+      <div className="p-3 border-t border-sidebar-border">
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="nav-item nav-item-inactive w-full justify-center"

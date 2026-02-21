@@ -37,18 +37,9 @@ function calculateEbayPrice(amazonPrice: number, config: PricingConfig): {
   const shipping = config.shipping_cost;
   const additional = config.additional_costs;
   const totalCost = baseCost + shipping + additional;
-
-  // eBay fee is on the final sale price, so we need to work backwards:
-  // finalPrice = totalCost / (1 - ebayFee% - paypalFee%) + paypalFixed
-  // Then add margin on top of totalCost
   const costWithMargin = totalCost * (1 + config.margin_percent / 100);
-
-  // eBay + PayPal fees are on the final price, solve: price = costWithMargin + price * fees + paypalFixed
-  // price * (1 - fees) = costWithMargin + paypalFixed
-  // price = (costWithMargin + paypalFixed) / (1 - fees)
   const totalFeePercent = (config.ebay_fee_percent + config.paypal_fee_percent) / 100;
   const ebayPrice = (costWithMargin + config.paypal_fee_fixed) / (1 - totalFeePercent);
-
   const ebayFee = ebayPrice * (config.ebay_fee_percent / 100);
   const paypalFee = ebayPrice * (config.paypal_fee_percent / 100) + config.paypal_fee_fixed;
   const profit = ebayPrice - baseCost - shipping - additional - ebayFee - paypalFee;
@@ -73,7 +64,6 @@ export function PricingSettings() {
   const [syncing, setSyncing] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
-  // Example calculation
   const examplePrice = 100;
   const example = calculateEbayPrice(examplePrice, config);
 
@@ -133,117 +123,103 @@ export function PricingSettings() {
   if (!loaded) return null;
 
   return (
-    <div className="glass-card">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+    <div className="glass-card overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border/60">
+        <h2 className="text-[15px] font-semibold text-foreground flex items-center gap-2">
           <Calculator className="w-4 h-4 text-primary" />
           Preiskalkulation & Marge
         </h2>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={handleSyncNow} disabled={syncing}>
+          <Button size="sm" variant="outline" onClick={handleSyncNow} disabled={syncing} className="rounded-xl">
             {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            {syncing ? "Synchronisiere..." : "Preise jetzt aktualisieren"}
+            {syncing ? "Synchronisiere..." : "Preise aktualisieren"}
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={saving}>
+          <Button size="sm" onClick={handleSave} disabled={saving} className="rounded-xl shadow-apple-sm">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             Speichern
           </Button>
         </div>
       </div>
 
-      <div className="p-4 space-y-6">
+      <div className="p-5 space-y-6">
         {/* Margin & Costs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Gewinnmarge (%)</label>
+          <div className="space-y-2">
+            <label className="text-[13px] font-medium text-foreground">Gewinnmarge (%)</label>
             <Input
-              type="number"
-              min={0}
-              step={1}
+              type="number" min={0} step={1}
               value={config.margin_percent}
               onChange={(e) => updateField("margin_percent", Number(e.target.value))}
-              className="font-mono"
+              className="font-mono rounded-xl"
             />
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Versandkosten (€)</label>
+          <div className="space-y-2">
+            <label className="text-[13px] font-medium text-foreground">Versandkosten (€)</label>
             <Input
-              type="number"
-              min={0}
-              step={0.01}
+              type="number" min={0} step={0.01}
               value={config.shipping_cost}
               onChange={(e) => updateField("shipping_cost", Number(e.target.value))}
-              className="font-mono"
+              className="font-mono rounded-xl"
             />
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Sonstige Kosten (€)</label>
+          <div className="space-y-2">
+            <label className="text-[13px] font-medium text-foreground">Sonstige Kosten (€)</label>
             <Input
-              type="number"
-              min={0}
-              step={0.01}
+              type="number" min={0} step={0.01}
               value={config.additional_costs}
               onChange={(e) => updateField("additional_costs", Number(e.target.value))}
-              className="font-mono"
+              className="font-mono rounded-xl"
             />
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">eBay-Gebühr (%)</label>
+          <div className="space-y-2">
+            <label className="text-[13px] font-medium text-foreground">eBay-Gebühr (%)</label>
             <Input
-              type="number"
-              min={0}
-              step={0.1}
+              type="number" min={0} step={0.1}
               value={config.ebay_fee_percent}
               onChange={(e) => updateField("ebay_fee_percent", Number(e.target.value))}
-              className="font-mono"
+              className="font-mono rounded-xl"
             />
-            <p className="text-[10px] text-muted-foreground">Standard: 13% (Endwertgebühr)</p>
+            <p className="text-[11px] text-muted-foreground">Standard: 13% (Endwertgebühr)</p>
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">PayPal/Zahlungsgebühr (%)</label>
+          <div className="space-y-2">
+            <label className="text-[13px] font-medium text-foreground">PayPal/Zahlungsgebühr (%)</label>
             <Input
-              type="number"
-              min={0}
-              step={0.01}
+              type="number" min={0} step={0.01}
               value={config.paypal_fee_percent}
               onChange={(e) => updateField("paypal_fee_percent", Number(e.target.value))}
-              className="font-mono"
+              className="font-mono rounded-xl"
             />
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">PayPal Fixgebühr (€)</label>
+          <div className="space-y-2">
+            <label className="text-[13px] font-medium text-foreground">PayPal Fixgebühr (€)</label>
             <Input
-              type="number"
-              min={0}
-              step={0.01}
+              type="number" min={0} step={0.01}
               value={config.paypal_fee_fixed}
               onChange={(e) => updateField("paypal_fee_fixed", Number(e.target.value))}
-              className="font-mono"
+              className="font-mono rounded-xl"
             />
           </div>
         </div>
 
         {/* Auto Sync */}
-        <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-card">
-          <div className="space-y-0.5">
-            <p className="text-sm font-medium text-foreground">Automatische Preisaktualisierung</p>
-            <p className="text-xs text-muted-foreground">
+        <div className="flex items-center justify-between p-4 rounded-2xl border border-border/60 bg-card">
+          <div className="space-y-1">
+            <p className="text-[14px] font-semibold text-foreground">Automatische Preisaktualisierung</p>
+            <p className="text-[13px] text-muted-foreground">
               Amazon-Preise regelmäßig prüfen und eBay-Preise anpassen
             </p>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5">
-              <label className="text-xs text-muted-foreground">Alle</label>
+              <label className="text-[13px] text-muted-foreground">Alle</label>
               <Input
-                type="number"
-                min={1}
-                max={24}
+                type="number" min={1} max={24}
                 value={config.sync_interval_hours}
                 onChange={(e) => updateField("sync_interval_hours", Number(e.target.value))}
-                className="w-16 font-mono text-center"
+                className="w-16 font-mono text-center rounded-xl"
                 disabled={!config.auto_sync_enabled}
               />
-              <label className="text-xs text-muted-foreground">Std.</label>
+              <label className="text-[13px] text-muted-foreground">Std.</label>
             </div>
             <Switch
               checked={config.auto_sync_enabled}
@@ -253,21 +229,21 @@ export function PricingSettings() {
         </div>
 
         {/* Example Calculation */}
-        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div className="rounded-2xl border border-border/60 bg-card p-5 space-y-4">
           <div className="flex items-center gap-2">
             <Info className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-medium text-foreground">Beispielrechnung (Amazon €{examplePrice.toFixed(2)})</h3>
+            <h3 className="text-[14px] font-semibold text-foreground">Beispielrechnung (Amazon €{examplePrice.toFixed(2)})</h3>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {example.breakdown.map((item) => (
-              <div key={item.label} className="flex justify-between text-xs">
+              <div key={item.label} className="flex justify-between text-[13px]">
                 <span className="text-muted-foreground">{item.label}</span>
-                <span className={`font-mono ${item.label.includes("Gewinn") ? "text-primary font-semibold" : "text-foreground"}`}>
+                <span className={`font-mono ${item.label.includes("Gewinn") ? "text-success font-semibold" : "text-foreground"}`}>
                   €{item.value.toFixed(2)}
                 </span>
               </div>
             ))}
-            <div className="border-t border-border pt-1.5 mt-1.5 flex justify-between text-sm font-semibold">
+            <div className="border-t border-border/60 pt-3 mt-3 flex justify-between text-[15px] font-bold">
               <span className="text-foreground">eBay-Verkaufspreis</span>
               <span className="text-primary font-mono">€{example.ebayPrice.toFixed(2)}</span>
             </div>
