@@ -1,15 +1,73 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchOrders } from "@/lib/api";
-import { useQuery } from "@tanstack/react-query";
-import { Search, Send, CheckCircle } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Search, Send, CheckCircle, Loader2, Plus, Truck } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const OrdersPage = () => {
   const { sellerId } = useAuth();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [pushingId, setPushingId] = useState<string | null>(null);
+  const [trackingDialog, setTrackingDialog] = useState<any>(null);
+  const [trackingNumber, setTrackingNumber] = useState("");
+  const [carrier, setCarrier] = useState("DHL");
+  const [addingTracking, setAddingTracking] = useState(false);
+
+  async function handlePushTracking(shipment: any) {
+    if (!sellerId) return;
+    setPushingId(shipment.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("push-tracking", {
+        body: { shipmentId: shipment.id, sellerId },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Push fehlgeschlagen");
+      toast.success(data.message);
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    } catch (err: any) {
+      toast.error(err.message || "Tracking-Push fehlgeschlagen");
+    } finally {
+      setPushingId(null);
+    }
+  }
+
+  async function handleAddTracking(orderId: string) {
+    if (!sellerId || !trackingNumber.trim()) return;
+    setAddingTracking(true);
+    try {
+      const { error } = await supabase
+        .from("shipments")
+        .insert({
+          order_id: orderId,
+          seller_id: sellerId,
+          tracking_number: trackingNumber.trim(),
+          carrier,
+        });
+      if (error) throw error;
+      toast.success("Tracking-Nummer hinzugefügt");
+      setTrackingDialog(null);
+      setTrackingNumber("");
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    } catch (err: any) {
+      toast.error(err.message || "Fehler beim Hinzufügen");
+    } finally {
+      setAddingTracking(false);
+    }
+  }
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ["orders", sellerId],
@@ -110,11 +168,21 @@ const OrdersPage = () => {
                         <td className="text-xs text-muted-foreground">{new Date(order.created_at).toLocaleString("de-DE")}</td>
                         <td>
                           {shipment && !shipment.tracking_pushed ? (
-                            <button className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 transition-all duration-200 shadow-apple-sm">
-                              <Send className="w-3 h-3" /> Push
+                            <button
+                              onClick={() => handlePushTracking(shipment)}
+                              disabled={pushingId === shipment.id}
+                              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 transition-all duration-200 shadow-apple-sm disabled:opacity-50"
+                            >
+                              {pushingId === shipment.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                              {pushingId === shipment.id ? "Pushing..." : "Push"}
                             </button>
-                          ) : order.order_status === "pending" ? (
-                            <span className="text-xs text-muted-foreground">Warte auf Tracking</span>
+                          ) : !shipment && order.order_status === "pending" ? (
+                            <button
+                              onClick={() => setTrackingDialog(order)}
+                              className="flex items-center gap-1.5 px-3.5 py-1.5 border border-border text-foreground text-xs font-semibold rounded-lg hover:bg-muted transition-all duration-200"
+                            >
+                              <Plus className="w-3 h-3" /> Tracking
+                            </button>
                           ) : null}
                         </td>
                       </tr>
@@ -125,6 +193,57 @@ const OrdersPage = () => {
             </div>
           )}
         </div>
+        {/* Add Tracking Dialog */}
+        <Dialog open={!!trackingDialog} onOpenChange={(open) => !open && setTrackingDialog(null)}>
+          <DialogContent className="sm:max-w-md rounded-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Truck className="w-5 h-5 text-primary" />
+                Tracking hinzufügen
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 pt-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Tracking-Nummer</label>
+                <Input
+                  value={trackingNumber}
+                  onChange={(e) => setTrackingNumber(e.target.value)}
+                  placeholder="z.B. 123456789"
+                  className="rounded-xl font-mono"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Versanddienstleister</label>
+                <select
+                  value={carrier}
+                  onChange={(e) => setCarrier(e.target.value)}
+                  className="w-full px-3 py-2 bg-card border border-border/60 rounded-xl text-sm"
+                >
+                  <option value="DHL">DHL</option>
+                  <option value="DPD">DPD</option>
+                  <option value="Hermes">Hermes</option>
+                  <option value="GLS">GLS</option>
+                  <option value="UPS">UPS</option>
+                  <option value="FedEx">FedEx</option>
+                  <option value="Deutsche Post">Deutsche Post</option>
+                </select>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => setTrackingDialog(null)} className="rounded-xl">
+                  Abbrechen
+                </Button>
+                <Button
+                  onClick={() => trackingDialog && handleAddTracking(trackingDialog.id)}
+                  disabled={!trackingNumber.trim() || addingTracking}
+                  className="rounded-xl"
+                >
+                  {addingTracking && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Hinzufügen & Push
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );
