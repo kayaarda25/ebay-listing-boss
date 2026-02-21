@@ -12,6 +12,9 @@ interface PricingConfig {
   paypal_fee_percent: number;
   paypal_fee_fixed: number;
   additional_costs: number;
+  pause_if_ek_above?: number | null;
+  min_profit?: number | null;
+  max_price_change_percent?: number | null;
 }
 
 function calculateEbayPrice(amazonPrice: number, config: PricingConfig): number {
@@ -20,6 +23,33 @@ function calculateEbayPrice(amazonPrice: number, config: PricingConfig): number 
   const totalFeePercent = (config.ebay_fee_percent + config.paypal_fee_percent) / 100;
   const ebayPrice = (costWithMargin + config.paypal_fee_fixed) / (1 - totalFeePercent);
   return Math.ceil(ebayPrice * 100) / 100;
+}
+
+function calculateProfit(ebayPrice: number, amazonPrice: number, config: PricingConfig): number {
+  const ebayFee = ebayPrice * (config.ebay_fee_percent / 100);
+  const paypalFee = ebayPrice * (config.paypal_fee_percent / 100) + config.paypal_fee_fixed;
+  return ebayPrice - amazonPrice - config.shipping_cost - config.additional_costs - ebayFee - paypalFee;
+}
+
+function shouldPause(amazonPrice: number, ebayPrice: number, config: PricingConfig): string | null {
+  if (config.pause_if_ek_above != null && amazonPrice > config.pause_if_ek_above) {
+    return `EK (€${amazonPrice}) über Schwellenwert (€${config.pause_if_ek_above})`;
+  }
+  if (config.min_profit != null) {
+    const profit = calculateProfit(ebayPrice, amazonPrice, config);
+    if (profit < config.min_profit) {
+      return `Gewinn (€${profit.toFixed(2)}) unter Mindestgewinn (€${config.min_profit})`;
+    }
+  }
+  return null;
+}
+
+function clampPriceChange(oldPrice: number, newPrice: number, maxChangePercent: number | null | undefined): number {
+  if (!maxChangePercent || !oldPrice) return newPrice;
+  const maxDelta = oldPrice * (maxChangePercent / 100);
+  if (newPrice > oldPrice + maxDelta) return Math.ceil((oldPrice + maxDelta) * 100) / 100;
+  if (newPrice < oldPrice - maxDelta) return Math.ceil((oldPrice - maxDelta) * 100) / 100;
+  return newPrice;
 }
 
 Deno.serve(async (req) => {
@@ -68,7 +98,7 @@ Deno.serve(async (req) => {
     // 2. Get all products with Amazon prices
     const { data: products, error: productsError } = await supabase
       .from('source_products')
-      .select('id, source_id, price_source, title')
+      .select('id, source_id, price_source, price_ebay, title')
       .eq('seller_id', sellerId)
       .eq('source_type', 'amazon')
       .not('price_source', 'is', null);
@@ -91,9 +121,10 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get('FIRECRAWL_API_KEY');
     let priceUpdates = 0;
     let priceChanges = 0;
+    let pausedCount = 0;
 
     if (apiKey) {
-      for (const product of products.slice(0, 20)) {
+      for (const product of products.slice(0, 25)) {
         try {
           const url = `https://www.amazon.de/dp/${product.source_id}`;
           const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
@@ -123,30 +154,52 @@ Deno.serve(async (req) => {
           const data = await response.json();
           if (response.ok && data.success !== false) {
             const extracted = data.data?.extract || data.extract || {};
-            if (extracted.price && extracted.price !== product.price_source) {
-              const newEbayPrice = calculateEbayPrice(extracted.price, config);
+            const currentEk = extracted.price || product.price_source!;
+            let newEbayPrice = calculateEbayPrice(currentEk, config);
+
+            // Apply max price change rule
+            if (product.price_ebay) {
+              newEbayPrice = clampPriceChange(product.price_ebay, newEbayPrice, config.max_price_change_percent);
+            }
+
+            // Check pause rules
+            const pauseReason = shouldPause(currentEk, newEbayPrice, config);
+
+            if (pauseReason) {
+              // Pause the offer if exists
               await supabase
-                .from('source_products')
-                .update({
-                  price_source: extracted.price,
-                  price_ebay: newEbayPrice,
-                  stock_source: extracted.availability?.toLowerCase().includes('auf lager') ? 1 : 0,
-                  price_synced_at: new Date().toISOString(),
-                })
-                .eq('id', product.id);
+                .from('ebay_offers')
+                .update({ state: 'paused' })
+                .eq('seller_id', sellerId)
+                .eq('sku', product.source_id);
+              pausedCount++;
+              console.log(`PAUSED ${product.source_id}: ${pauseReason}`);
+            }
+
+            const updateData: any = {
+              price_ebay: newEbayPrice,
+              price_synced_at: new Date().toISOString(),
+            };
+
+            if (extracted.price && extracted.price !== product.price_source) {
+              updateData.price_source = extracted.price;
+              updateData.stock_source = extracted.availability?.toLowerCase().includes('auf lager') ? 1 : 0;
               priceChanges++;
               console.log(`${product.source_id}: €${product.price_source} → €${extracted.price} (eBay: €${newEbayPrice})`);
-            } else {
-              // Price unchanged, still recalculate eBay price
-              const newEbayPrice = calculateEbayPrice(product.price_source!, config);
-              await supabase
-                .from('source_products')
-                .update({
-                  price_ebay: newEbayPrice,
-                  price_synced_at: new Date().toISOString(),
-                })
-                .eq('id', product.id);
             }
+
+            await supabase
+              .from('source_products')
+              .update(updateData)
+              .eq('id', product.id);
+
+            // Also update offer price
+            await supabase
+              .from('ebay_offers')
+              .update({ price: newEbayPrice })
+              .eq('seller_id', sellerId)
+              .eq('sku', product.source_id);
+
             priceUpdates++;
           }
         } catch (err) {
@@ -156,7 +209,23 @@ Deno.serve(async (req) => {
     } else {
       // No Firecrawl, just recalculate eBay prices from existing data
       for (const product of products) {
-        const newEbayPrice = calculateEbayPrice(product.price_source!, config);
+        let newEbayPrice = calculateEbayPrice(product.price_source!, config);
+
+        if (product.price_ebay) {
+          newEbayPrice = clampPriceChange(product.price_ebay, newEbayPrice, config.max_price_change_percent);
+        }
+
+        const pauseReason = shouldPause(product.price_source!, newEbayPrice, config);
+        if (pauseReason) {
+          await supabase
+            .from('ebay_offers')
+            .update({ state: 'paused' })
+            .eq('seller_id', sellerId)
+            .eq('sku', product.source_id);
+          pausedCount++;
+          console.log(`PAUSED ${product.source_id}: ${pauseReason}`);
+        }
+
         await supabase
           .from('source_products')
           .update({
@@ -164,18 +233,27 @@ Deno.serve(async (req) => {
             price_synced_at: new Date().toISOString(),
           })
           .eq('id', product.id);
+
+        await supabase
+          .from('ebay_offers')
+          .update({ price: newEbayPrice })
+          .eq('seller_id', sellerId)
+          .eq('sku', product.source_id);
+
         priceUpdates++;
       }
     }
 
-    const message = apiKey
-      ? `${priceUpdates} Produkt(e) geprüft, ${priceChanges} Preisänderung(en) gefunden`
-      : `${priceUpdates} eBay-Preis(e) neu berechnet`;
+    const parts = [];
+    if (priceUpdates) parts.push(`${priceUpdates} geprüft`);
+    if (priceChanges) parts.push(`${priceChanges} Preisänderungen`);
+    if (pausedCount) parts.push(`${pausedCount} pausiert (Regeln)`);
+    const message = parts.join(', ') || 'Keine Änderungen';
 
     console.log(`Sync complete for seller ${sellerId}: ${message}`);
 
     return new Response(
-      JSON.stringify({ success: true, message, updated: priceUpdates, changed: priceChanges }),
+      JSON.stringify({ success: true, message, updated: priceUpdates, changed: priceChanges, paused: pausedCount }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {

@@ -6,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Loader2, Package, AlertCircle, CheckCircle2 } from "lucide-react";
-import { calculateEbayPrice, type PricingConfig } from "@/components/PricingSettings";
+import { calculateEbayPrice, type PricingConfig, DEFAULT_PRICING } from "@/components/PricingSettings";
 
 interface ImportDialogProps {
   open: boolean;
@@ -35,6 +35,7 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
   const [input, setInput] = useState("");
   const [importing, setImporting] = useState(false);
   const [status, setStatus] = useState("");
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [results, setResults] = useState<{ added: string[]; skipped: string[]; scraped: number } | null>(null);
 
   const detectedAsins = input.trim() ? extractAsins(input) : [];
@@ -44,6 +45,7 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
 
     setImporting(true);
     setResults(null);
+    setProgress({ current: 0, total: 0 });
     setStatus("Prüfe Duplikate...");
 
     try {
@@ -85,14 +87,13 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
         .eq("id", sellerId)
         .maybeSingle();
       const pricingConfig: PricingConfig = {
-        margin_percent: 20, shipping_cost: 4.99, ebay_fee_percent: 13,
-        paypal_fee_percent: 2.49, paypal_fee_fixed: 0.35, additional_costs: 0,
-        auto_sync_enabled: true, sync_interval_hours: 6,
-        ...(sellerData?.pricing_settings as unknown as PricingConfig || {}),
+        ...DEFAULT_PRICING,
+        ...(sellerData?.pricing_settings as unknown as Partial<PricingConfig> || {}),
       };
 
       // Step 2: Scrape product data from Amazon
       setStatus(`Lade Produktdaten von Amazon (${newAsins.length} Produkt(e))...`);
+      setProgress({ current: 0, total: newAsins.length });
       let scrapedCount = 0;
 
       try {
@@ -103,7 +104,8 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
         if (!scrapeError && scrapeData?.success && scrapeData.results) {
           for (const asin of newAsins) {
             const productData = scrapeData.results[asin];
-            if (productData?.success) {
+              if (productData?.success) {
+                setProgress(prev => ({ ...prev, current: prev.current + 1 }));
               setStatus(`Aktualisiere ${asin}...`);
               const { error: updateError } = await supabase
                 .from("source_products")
@@ -244,7 +246,7 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
             Produkte importieren
           </DialogTitle>
           <DialogDescription>
-            Füge Amazon-URLs oder ASINs ein (eine pro Zeile). Produktdaten werden automatisch von Amazon geladen.
+            Füge Amazon-URLs oder ASINs ein (eine pro Zeile, max. 25). Produktdaten werden automatisch von Amazon geladen und mit AI optimiert.
           </DialogDescription>
         </DialogHeader>
 
@@ -277,10 +279,25 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
             </div>
           )}
 
-          {importing && status && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-              {status}
+          {importing && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                {status}
+              </div>
+              {progress.total > 0 && (
+                <div className="space-y-1">
+                  <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-500"
+                      style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground text-right">
+                    {progress.current} / {progress.total} Produkte
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

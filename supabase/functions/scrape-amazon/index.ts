@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
 
     const results: Record<string, any> = {};
 
-    for (const asin of asins.slice(0, 10)) {
+    for (const asin of asins.slice(0, 25)) {
       const url = `https://www.amazon.de/dp/${asin}`;
       console.log(`Scraping ${url}`);
 

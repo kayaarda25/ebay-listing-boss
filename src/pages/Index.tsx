@@ -2,6 +2,7 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { StatCard } from "@/components/StatCard";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchDashboardStats, fetchListings, fetchOrders } from "@/lib/api";
+import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import {
   Package,
@@ -10,8 +11,11 @@ import {
   Pause,
   Activity,
   ArrowRight,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { calculateEbayPrice, type PricingConfig, DEFAULT_PRICING } from "@/components/PricingSettings";
 
 const Index = () => {
   const { sellerId } = useAuth();
@@ -33,6 +37,60 @@ const Index = () => {
     queryFn: () => fetchOrders(sellerId!),
     enabled: !!sellerId,
   });
+
+  const { data: products } = useQuery({
+    queryKey: ["products", sellerId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("source_products")
+        .select("id, title, source_id, price_source, price_ebay, images_json")
+        .eq("seller_id", sellerId!)
+        .order("created_at", { ascending: false });
+      return data || [];
+    },
+    enabled: !!sellerId,
+  });
+
+  const { data: seller } = useQuery({
+    queryKey: ["seller", sellerId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("sellers")
+        .select("pricing_settings")
+        .eq("id", sellerId!)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!sellerId,
+  });
+
+  const pricingConfig: PricingConfig = {
+    ...DEFAULT_PRICING,
+    ...(seller?.pricing_settings as unknown as Partial<PricingConfig> || {}),
+  };
+
+  // Calculate profit metrics
+  const profitData = (products || [])
+    .filter(p => p.price_source != null && p.price_ebay != null)
+    .map(p => {
+      const calc = calculateEbayPrice(p.price_source!, pricingConfig);
+      const ebayFee = p.price_ebay! * (pricingConfig.ebay_fee_percent / 100);
+      const paypalFee = p.price_ebay! * (pricingConfig.paypal_fee_percent / 100) + pricingConfig.paypal_fee_fixed;
+      const profit = p.price_ebay! - p.price_source! - pricingConfig.shipping_cost - pricingConfig.additional_costs - ebayFee - paypalFee;
+      const marginPercent = p.price_ebay! > 0 ? (profit / p.price_ebay!) * 100 : 0;
+      return {
+        ...p,
+        profit,
+        marginPercent,
+        ebayFee,
+        paypalFee,
+      };
+    });
+
+  const totalProfit = profitData.reduce((sum, p) => sum + p.profit, 0);
+  const avgMargin = profitData.length > 0
+    ? profitData.reduce((sum, p) => sum + p.marginPercent, 0) / profitData.length
+    : 0;
 
   const recentListings = (listings || []).slice(0, 5);
   const recentOrders = (orders || []).slice(0, 5);
@@ -58,6 +116,85 @@ const Index = () => {
           />
           <StatCard label="Pausierte Listings" value={stats?.pausedListings ?? 0} icon={Pause} />
         </div>
+
+        {/* Profit Overview */}
+        {profitData.length > 0 && (
+          <div className="space-y-4">
+            <h2 className="text-[17px] font-semibold text-foreground">Gewinn-Übersicht</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="glass-card p-5">
+                <p className="text-[13px] text-muted-foreground">Gesch. Gewinn / Produkt</p>
+                <p className={`text-2xl font-bold font-mono mt-1 ${totalProfit >= 0 ? 'text-success' : 'text-destructive'}`}>
+                  €{totalProfit.toFixed(2)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">über {profitData.length} Produkte</p>
+              </div>
+              <div className="glass-card p-5">
+                <p className="text-[13px] text-muted-foreground">Ø Marge</p>
+                <p className={`text-2xl font-bold font-mono mt-1 ${avgMargin >= 0 ? 'text-success' : 'text-destructive'}`}>
+                  {avgMargin.toFixed(1)}%
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">durchschnittlich pro Produkt</p>
+              </div>
+              <div className="glass-card p-5">
+                <p className="text-[13px] text-muted-foreground">Produkte mit Gewinn</p>
+                <p className="text-2xl font-bold font-mono mt-1 text-foreground">
+                  {profitData.filter(p => p.profit > 0).length} / {profitData.length}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">profitabel</p>
+              </div>
+            </div>
+
+            {/* Per-product profit table */}
+            <div className="glass-card overflow-hidden">
+              <div className="px-5 py-4 border-b border-border/60">
+                <h3 className="text-[15px] font-semibold text-foreground">Gewinn pro Produkt</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Produkt</th>
+                      <th>EK (Amazon)</th>
+                      <th>VK (eBay)</th>
+                      <th>Gebühren</th>
+                      <th>Gewinn</th>
+                      <th>Marge</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {profitData.map(p => (
+                      <tr key={p.id}>
+                        <td>
+                          <div className="max-w-[200px]">
+                            <p className="text-sm font-medium text-foreground truncate">{p.title}</p>
+                            <p className="text-xs text-muted-foreground font-mono">{p.source_id}</p>
+                          </div>
+                        </td>
+                        <td className="font-mono text-sm">€{p.price_source!.toFixed(2)}</td>
+                        <td className="font-mono text-sm font-semibold">€{p.price_ebay!.toFixed(2)}</td>
+                        <td className="font-mono text-xs text-muted-foreground">
+                          €{(p.ebayFee + p.paypalFee + pricingConfig.shipping_cost).toFixed(2)}
+                        </td>
+                        <td>
+                          <span className={`inline-flex items-center gap-1 font-mono text-sm font-semibold ${p.profit >= 0 ? 'text-success' : 'text-destructive'}`}>
+                            {p.profit >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                            €{p.profit.toFixed(2)}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`font-mono text-sm ${p.marginPercent >= 15 ? 'text-success' : p.marginPercent >= 0 ? 'text-warning' : 'text-destructive'}`}>
+                            {p.marginPercent.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* API Health */}
         <div className="glass-card p-5 flex items-center gap-4">
