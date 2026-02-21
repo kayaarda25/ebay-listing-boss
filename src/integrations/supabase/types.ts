@@ -335,6 +335,7 @@ export type Database = {
           stock_source: number | null
           title: string
           updated_at: string
+          variants_json: Json | null
         }
         Insert: {
           attributes_json?: Json | null
@@ -352,6 +353,7 @@ export type Database = {
           stock_source?: number | null
           title: string
           updated_at?: string
+          variants_json?: Json | null
         }
         Update: {
           attributes_json?: Json | null
@@ -369,6 +371,7 @@ export type Database = {
           stock_source?: number | null
           title?: string
           updated_at?: string
+          variants_json?: Json | null
         }
         Relationships: [
           {

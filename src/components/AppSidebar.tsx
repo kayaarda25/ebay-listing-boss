@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "@/hooks/useTheme";
+import { StoreSwitcher } from "@/components/StoreSwitcher";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -45,6 +46,11 @@ export function AppSidebar() {
             SellerPilot
           </span>
         )}
+      </div>
+
+      {/* Store Switcher */}
+      <div className="px-3 pb-2 border-b border-sidebar-border mb-1">
+        <StoreSwitcher collapsed={collapsed} />
       </div>
 
       {/* Navigation */}

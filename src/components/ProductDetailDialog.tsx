@@ -4,7 +4,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
 import { toast } from "sonner";
-import { ExternalLink, Star, ImageOff, Sparkles, Loader2, Copy, Check, Trash2 } from "lucide-react";
+import { ExternalLink, Star, ImageOff, Sparkles, Loader2, Copy, Check, Trash2, Save, Tag } from "lucide-react";
+import { VariantManager, type VariantGroup } from "@/components/VariantManager";
+import { useAuth } from "@/hooks/useAuth";
 
 interface ProductDetailDialogProps {
   product: any;
@@ -15,10 +17,42 @@ interface ProductDetailDialogProps {
 }
 
 export function ProductDetailDialog({ product, open, onOpenChange, onUpdate, onDelete }: ProductDetailDialogProps) {
+  const { sellerId } = useAuth();
   const [optimizing, setOptimizing] = useState(false);
   const [optimizedTitle, setOptimizedTitle] = useState("");
   const [optimizedDesc, setOptimizedDesc] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  const [variants, setVariants] = useState<VariantGroup[]>([]);
+  const [variantsLoaded, setVariantsLoaded] = useState(false);
+  const [savingVariants, setSavingVariants] = useState(false);
+
+  // Load variants when product changes
+  if (product && !variantsLoaded) {
+    const v = Array.isArray(product.variants_json) ? product.variants_json as VariantGroup[] : [];
+    setVariants(v);
+    setVariantsLoaded(true);
+  }
+  if (!product && variantsLoaded) {
+    setVariantsLoaded(false);
+  }
+
+  async function handleSaveVariants() {
+    if (!product) return;
+    setSavingVariants(true);
+    try {
+      const { error } = await supabase
+        .from("source_products")
+        .update({ variants_json: variants as any })
+        .eq("id", product.id);
+      if (error) throw error;
+      toast.success("Varianten gespeichert");
+      onUpdate?.();
+    } catch (err: any) {
+      toast.error(err.message || "Speichern fehlgeschlagen");
+    } finally {
+      setSavingVariants(false);
+    }
+  }
 
   if (!product) return null;
 
@@ -136,6 +170,23 @@ export function ProductDetailDialog({ product, open, onOpenChange, onUpdate, onD
               <p className="text-sm text-muted-foreground leading-relaxed">{product.description}</p>
             </div>
           )}
+
+          {/* Variants */}
+          <div className="border border-border rounded-lg p-4 space-y-3 bg-card">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
+                <Tag className="w-4 h-4 text-primary" />
+                Varianten
+              </h4>
+              {variants.length > 0 && (
+                <Button size="sm" onClick={handleSaveVariants} disabled={savingVariants} className="rounded-xl">
+                  {savingVariants ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  Speichern
+                </Button>
+              )}
+            </div>
+            <VariantManager variants={variants} onChange={setVariants} />
+          </div>
 
           {/* AI Optimization */}
           <div className="border border-border rounded-lg p-4 space-y-3 bg-card">
