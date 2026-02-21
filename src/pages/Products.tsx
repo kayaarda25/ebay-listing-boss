@@ -193,11 +193,23 @@ const ProductsPage = () => {
                       </div>
 
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        {p.price_source != null && (
-                          <span className="text-lg font-semibold text-foreground font-mono">
-                            €{Number(p.price_source).toFixed(2)}
-                          </span>
-                        )}
+                        <div className="text-right">
+                          {p.price_source != null && (
+                            <span className="text-xs text-muted-foreground font-mono block">
+                              EK €{Number(p.price_source).toFixed(2)}
+                            </span>
+                          )}
+                          {(p as any).price_ebay != null && (
+                            <span className="text-lg font-semibold text-primary font-mono">
+                              €{Number((p as any).price_ebay).toFixed(2)}
+                            </span>
+                          )}
+                          {(p as any).price_ebay == null && p.price_source != null && (
+                            <span className="text-lg font-semibold text-foreground font-mono">
+                              €{Number(p.price_source).toFixed(2)}
+                            </span>
+                          )}
+                        </div>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

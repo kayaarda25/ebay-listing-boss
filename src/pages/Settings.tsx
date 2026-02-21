@@ -1,4 +1,5 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { PricingSettings } from "@/components/PricingSettings";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchSeller } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
@@ -80,6 +81,9 @@ const SettingsPage = () => {
             ))}
           </div>
         </div>
+
+        {/* Pricing Settings */}
+        <PricingSettings />
       </div>
     </DashboardLayout>
   );
