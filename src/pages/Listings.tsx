@@ -1,14 +1,17 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { ImportDialog } from "@/components/ImportDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchListings } from "@/lib/api";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, Plus, ExternalLink } from "lucide-react";
 import { useState } from "react";
 
 const ListingsPage = () => {
   const { sellerId } = useAuth();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [importOpen, setImportOpen] = useState(false);
 
   const { data: listings = [], isLoading } = useQuery({
     queryKey: ["listings", sellerId],
@@ -32,7 +35,10 @@ const ListingsPage = () => {
               {listings.length} Listings gesamt
             </p>
           </div>
-          <button className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:opacity-90 transition-opacity">
+          <button
+            onClick={() => setImportOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:opacity-90 transition-opacity"
+          >
             <Plus className="w-4 h-4" />
             Import
           </button>
@@ -114,6 +120,11 @@ const ListingsPage = () => {
             </table>
           )}
         </div>
+        <ImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          onSuccess={() => queryClient.invalidateQueries({ queryKey: ["listings"] })}
+        />
       </div>
     </DashboardLayout>
   );
