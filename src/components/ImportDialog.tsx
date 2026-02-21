@@ -111,6 +111,39 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
                 .eq("source_id", asin);
 
               if (!updateError) scrapedCount++;
+
+              // Step 3: Auto-optimize with AI
+              setStatus(`AI optimiert ${asin}...`);
+              try {
+                const { data: aiData, error: aiError } = await supabase.functions.invoke("optimize-listing", {
+                  body: {
+                    title: productData.title,
+                    description: productData.description,
+                    brand: productData.brand,
+                  },
+                });
+
+                if (!aiError && aiData?.success) {
+                  await supabase
+                    .from("source_products")
+                    .update({
+                      title: aiData.title,
+                      description: aiData.description,
+                      attributes_json: {
+                        brand: productData.brand,
+                        rating: productData.rating,
+                        review_count: productData.review_count,
+                        availability: productData.availability,
+                        original_title: productData.title,
+                        original_description: productData.description,
+                      },
+                    })
+                    .eq("seller_id", sellerId)
+                    .eq("source_id", asin);
+                }
+              } catch (aiErr) {
+                console.warn("AI optimization failed (product still saved):", aiErr);
+              }
             }
           }
         } else {
