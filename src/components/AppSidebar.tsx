@@ -8,11 +8,13 @@ import {
   Zap,
   ChevronLeft,
   ChevronRight,
+  BoxesIcon,
 } from "lucide-react";
 import { useState } from "react";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/products", label: "Produkte", icon: BoxesIcon },
   { path: "/listings", label: "Listings", icon: Package },
   { path: "/orders", label: "Orders", icon: ShoppingCart },
   { path: "/logs", label: "Logs", icon: ScrollText },
