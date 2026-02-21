@@ -3,7 +3,7 @@ import { ImportDialog } from "@/components/ImportDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, ExternalLink, Package } from "lucide-react";
+import { Search, Plus, ExternalLink, Package, Star, ImageOff } from "lucide-react";
 import { useState } from "react";
 
 async function fetchProducts(sellerId: string) {
@@ -34,6 +34,18 @@ const ProductsPage = () => {
       p.source_id.toLowerCase().includes(term)
     );
   });
+
+  function getImages(p: any): string[] {
+    if (Array.isArray(p.images_json)) return p.images_json;
+    return [];
+  }
+
+  function getAttr(p: any, key: string) {
+    if (p.attributes_json && typeof p.attributes_json === "object") {
+      return (p.attributes_json as Record<string, any>)[key] ?? null;
+    }
+    return null;
+  }
 
   return (
     <DashboardLayout>
@@ -67,64 +79,110 @@ const ProductsPage = () => {
           </div>
         </div>
 
-        <div className="glass-card overflow-x-auto">
-          {isLoading ? (
-            <div className="py-12 text-center text-sm text-muted-foreground">Laden...</div>
-          ) : filtered.length === 0 ? (
-            <div className="py-12 text-center text-sm text-muted-foreground flex flex-col items-center gap-3">
-              <Package className="w-10 h-10 text-muted-foreground/40" />
-              {products.length === 0
-                ? "Noch keine Produkte. Importiere Amazon-URLs, um loszulegen."
-                : "Keine Produkte gefunden."}
-            </div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Titel</th>
-                  <th>ASIN</th>
-                  <th>Quelle</th>
-                  <th>Preis</th>
-                  <th>Bestand</th>
-                  <th>Amazon</th>
-                  <th>Importiert am</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((p) => (
-                  <tr key={p.id}>
-                    <td className="max-w-[240px] truncate font-medium text-foreground">
-                      {p.title}
-                    </td>
-                    <td className="font-mono text-xs text-muted-foreground">{p.source_id}</td>
-                    <td>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-accent text-accent-foreground text-xs font-medium">
-                        {p.source_type}
+        {isLoading ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">Laden...</div>
+        ) : filtered.length === 0 ? (
+          <div className="glass-card py-12 text-center text-sm text-muted-foreground flex flex-col items-center gap-3">
+            <Package className="w-10 h-10 text-muted-foreground/40" />
+            {products.length === 0
+              ? "Noch keine Produkte. Importiere Amazon-URLs, um loszulegen."
+              : "Keine Produkte gefunden."}
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {filtered.map((p) => {
+              const images = getImages(p);
+              const brand = getAttr(p, "brand");
+              const rating = getAttr(p, "rating");
+              const reviewCount = getAttr(p, "review_count");
+              const availability = getAttr(p, "availability");
+
+              return (
+                <div key={p.id} className="glass-card p-4 flex gap-4">
+                  {/* Image */}
+                  <div className="w-20 h-20 rounded-md border border-border bg-muted flex-shrink-0 overflow-hidden flex items-center justify-center">
+                    {images.length > 0 ? (
+                      <img
+                        src={images[0]}
+                        alt={p.title}
+                        className="w-full h-full object-contain"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <ImageOff className="w-6 h-6 text-muted-foreground/40" />
+                    )}
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-medium text-foreground leading-snug line-clamp-2">
+                          {p.title}
+                        </h3>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="font-mono text-xs text-muted-foreground">{p.source_id}</span>
+                          {brand && (
+                            <span className="text-xs text-muted-foreground">· {brand}</span>
+                          )}
+                          {rating != null && (
+                            <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                              <Star className="w-3 h-3 fill-current text-primary" />
+                              {rating}
+                              {reviewCount != null && (
+                                <span className="text-muted-foreground/60">({reviewCount})</span>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        {p.price_source != null && (
+                          <span className="text-lg font-semibold text-foreground font-mono">
+                            €{Number(p.price_source).toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {p.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                        {p.description}
+                      </p>
+                    )}
+
+                    <div className="flex items-center gap-3 pt-1">
+                      {availability && (
+                        <span className={`text-xs font-medium ${
+                          availability.toLowerCase().includes("auf lager") || availability.toLowerCase().includes("in stock")
+                            ? "text-primary"
+                            : "text-muted-foreground"
+                        }`}>
+                          {availability}
+                        </span>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        Bestand: {p.stock_source ?? "—"}
                       </span>
-                    </td>
-                    <td className="font-mono">
-                      {p.price_source != null ? `€${Number(p.price_source).toFixed(2)}` : "—"}
-                    </td>
-                    <td className="font-mono">{p.stock_source ?? "—"}</td>
-                    <td>
                       <a
                         href={`https://www.amazon.de/dp/${p.source_id}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs text-primary hover:underline inline-flex items-center gap-1 font-mono"
+                        className="text-xs text-primary hover:underline inline-flex items-center gap-1 ml-auto"
                       >
-                        Öffnen <ExternalLink className="w-3 h-3" />
+                        Amazon <ExternalLink className="w-3 h-3" />
                       </a>
-                    </td>
-                    <td className="text-xs text-muted-foreground">
-                      {new Date(p.created_at).toLocaleString("de-DE")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(p.created_at).toLocaleDateString("de-DE")}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <ImportDialog
           open={importOpen}

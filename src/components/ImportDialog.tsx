@@ -17,12 +17,10 @@ function extractAsins(text: string): string[] {
   const asinRegex = /(?:\/(?:dp|gp\/product|ASIN)\/|(?:^|\s))([A-Z0-9]{10})(?:\s|\/|$|\?)/gi;
   const asins = new Set<string>();
 
-  // Match ASINs from URLs
   for (const match of text.matchAll(asinRegex)) {
     asins.add(match[1].toUpperCase());
   }
 
-  // Also try standalone ASINs (B followed by 9 alphanumeric chars)
   const standaloneRegex = /\b(B[A-Z0-9]{9})\b/g;
   for (const match of text.matchAll(standaloneRegex)) {
     asins.add(match[1].toUpperCase());
@@ -35,7 +33,8 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
   const { sellerId } = useAuth();
   const [input, setInput] = useState("");
   const [importing, setImporting] = useState(false);
-  const [results, setResults] = useState<{ added: string[]; skipped: string[] } | null>(null);
+  const [status, setStatus] = useState("");
+  const [results, setResults] = useState<{ added: string[]; skipped: string[]; scraped: number } | null>(null);
 
   const detectedAsins = input.trim() ? extractAsins(input) : [];
 
@@ -44,6 +43,7 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
 
     setImporting(true);
     setResults(null);
+    setStatus("Prüfe Duplikate...");
 
     try {
       // Check which ASINs already exist
@@ -58,37 +58,84 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
       const newAsins = detectedAsins.filter((a) => !existingIds.has(a));
       const skippedAsins = detectedAsins.filter((a) => existingIds.has(a));
 
-      if (newAsins.length > 0) {
-        const rows = newAsins.map((asin) => ({
-          seller_id: sellerId,
-          source_type: "amazon",
-          source_id: asin,
-          title: `Amazon ${asin}`,
-        }));
-
-        const { error } = await supabase.from("source_products").insert(rows);
-        if (error) throw error;
-      }
-
-      setResults({ added: newAsins, skipped: skippedAsins });
-
-      if (newAsins.length > 0) {
-        toast.success(`${newAsins.length} Produkt(e) importiert`);
-        onSuccess?.();
-      } else {
+      if (newAsins.length === 0) {
+        setResults({ added: [], skipped: skippedAsins, scraped: 0 });
         toast.info("Alle ASINs bereits vorhanden");
+        setImporting(false);
+        setStatus("");
+        return;
       }
+
+      // Step 1: Insert placeholders
+      setStatus(`Erstelle ${newAsins.length} Produkt(e)...`);
+      const rows = newAsins.map((asin) => ({
+        seller_id: sellerId,
+        source_type: "amazon",
+        source_id: asin,
+        title: `Amazon ${asin}`,
+      }));
+      const { error: insertError } = await supabase.from("source_products").insert(rows);
+      if (insertError) throw insertError;
+
+      // Step 2: Scrape product data from Amazon
+      setStatus(`Lade Produktdaten von Amazon (${newAsins.length} Produkt(e))...`);
+      let scrapedCount = 0;
+
+      try {
+        const { data: scrapeData, error: scrapeError } = await supabase.functions.invoke("scrape-amazon", {
+          body: { asins: newAsins },
+        });
+
+        if (!scrapeError && scrapeData?.success && scrapeData.results) {
+          for (const asin of newAsins) {
+            const productData = scrapeData.results[asin];
+            if (productData?.success) {
+              setStatus(`Aktualisiere ${asin}...`);
+              const { error: updateError } = await supabase
+                .from("source_products")
+                .update({
+                  title: productData.title,
+                  description: productData.description,
+                  price_source: productData.price,
+                  stock_source: productData.availability?.toLowerCase().includes("auf lager") ? 1 : 0,
+                  images_json: productData.images || [],
+                  attributes_json: {
+                    brand: productData.brand,
+                    rating: productData.rating,
+                    review_count: productData.review_count,
+                    availability: productData.availability,
+                  },
+                  last_synced_at: new Date().toISOString(),
+                })
+                .eq("seller_id", sellerId)
+                .eq("source_id", asin);
+
+              if (!updateError) scrapedCount++;
+            }
+          }
+        } else {
+          console.warn("Scrape failed, products saved with placeholder data:", scrapeError);
+        }
+      } catch (scrapeErr) {
+        console.warn("Scraping error (products still saved):", scrapeErr);
+      }
+
+      setResults({ added: newAsins, skipped: skippedAsins, scraped: scrapedCount });
+      toast.success(`${newAsins.length} Produkt(e) importiert, ${scrapedCount} mit Daten angereichert`);
+      onSuccess?.();
     } catch (err: any) {
       console.error("Import error:", err);
       toast.error("Import fehlgeschlagen: " + (err.message || "Unbekannter Fehler"));
     } finally {
       setImporting(false);
+      setStatus("");
     }
   }
 
   function handleClose() {
     setInput("");
     setResults(null);
+    setStatus("");
     onOpenChange(false);
   }
 
@@ -101,7 +148,7 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
             Produkte importieren
           </DialogTitle>
           <DialogDescription>
-            Füge Amazon-URLs oder ASINs ein (eine pro Zeile). Die ASINs werden automatisch erkannt.
+            Füge Amazon-URLs oder ASINs ein (eine pro Zeile). Produktdaten werden automatisch von Amazon geladen.
           </DialogDescription>
         </DialogHeader>
 
@@ -115,9 +162,10 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
             }}
             rows={6}
             className="font-mono text-sm"
+            disabled={importing}
           />
 
-          {detectedAsins.length > 0 && !results && (
+          {detectedAsins.length > 0 && !results && !importing && (
             <div className="flex flex-wrap gap-1.5">
               {detectedAsins.map((asin) => (
                 <span
@@ -133,6 +181,13 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
             </div>
           )}
 
+          {importing && status && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+              {status}
+            </div>
+          )}
+
           {detectedAsins.length === 0 && input.trim().length > 0 && (
             <div className="flex items-center gap-2 text-sm text-destructive">
               <AlertCircle className="w-4 h-4 shrink-0" />
@@ -143,10 +198,12 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
           {results && (
             <div className="space-y-2 text-sm">
               {results.added.length > 0 && (
-              <div className="flex items-start gap-2 text-primary">
-                <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
-                <span>{results.added.length} neue(s) Produkt(e): {results.added.join(", ")}</span>
-              </div>
+                <div className="flex items-start gap-2 text-primary">
+                  <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>
+                    {results.added.length} importiert, {results.scraped} mit Amazon-Daten angereichert
+                  </span>
+                </div>
               )}
               {results.skipped.length > 0 && (
                 <div className="flex items-start gap-2 text-muted-foreground">
@@ -159,7 +216,7 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose}>
+          <Button variant="outline" onClick={handleClose} disabled={importing}>
             {results ? "Schließen" : "Abbrechen"}
           </Button>
           {!results && (
