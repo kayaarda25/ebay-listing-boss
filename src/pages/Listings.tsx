@@ -1,5 +1,5 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { ImportDialog } from "@/components/ImportDialog";
+import { CreateListingDialog } from "@/components/CreateListingDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchListings } from "@/lib/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,7 +11,7 @@ const ListingsPage = () => {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [importOpen, setImportOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const { data: listings = [], isLoading } = useQuery({
     queryKey: ["listings", sellerId],
@@ -36,11 +36,11 @@ const ListingsPage = () => {
             </p>
           </div>
           <button
-            onClick={() => setImportOpen(true)}
+            onClick={() => setCreateOpen(true)}
             className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground text-[14px] font-semibold rounded-xl hover:bg-primary/90 transition-all duration-200 shadow-apple-sm"
           >
             <Plus className="w-4 h-4" />
-            Import
+            Listing erstellen
           </button>
         </div>
 
@@ -122,7 +122,7 @@ const ListingsPage = () => {
             </div>
           )}
         </div>
-        <ImportDialog open={importOpen} onOpenChange={setImportOpen} onSuccess={() => queryClient.invalidateQueries({ queryKey: ["listings"] })} />
+        <CreateListingDialog open={createOpen} onOpenChange={setCreateOpen} onSuccess={() => queryClient.invalidateQueries({ queryKey: ["listings"] })} />
       </div>
     </DashboardLayout>
   );
