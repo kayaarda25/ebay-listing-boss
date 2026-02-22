@@ -119,6 +119,12 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
           weight: product.productWeight ? `${product.productWeight}g` : null,
           category: product.categoryName || null,
           cj_product_id: pid,
+          warehouse: product.sourceFrom || product.warehouseName || null,
+          shipping_time: product.logisticAging || product.deliveryDays || null,
+          shipping_cost: product.logisticPrice || product.shippingPrice || null,
+          packing_weight: product.packingWeight ? `${product.packingWeight}g` : null,
+          dimensions: product.productUnit ? `${product.productUnit}` : null,
+          material: product.material || null,
         },
         variants_json: (product.variants || []).map((v: any) => ({
           vid: v.vid,
