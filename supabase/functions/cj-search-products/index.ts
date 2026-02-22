@@ -54,32 +54,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Use V2 product list API with more filters
-    const searchBody: Record<string, any> = {
-      productNameEn: query,
-      pageNum,
-      pageSize,
-    };
-    if (categoryId) searchBody.categoryId = categoryId;
-    if (countryCode) searchBody.countryCode = countryCode;
-
-    const searchRes = await fetch(`${CJ_BASE}/product/list`, {
-      method: "GET",
-      headers: { "CJ-Access-Token": token },
-    });
-
-    // Use query params for GET endpoint
+    // Build search URL with query params
     const searchUrl = new URL(`${CJ_BASE}/product/list`);
     searchUrl.searchParams.set("productNameEn", query);
     searchUrl.searchParams.set("pageNum", String(pageNum));
     searchUrl.searchParams.set("pageSize", String(pageSize));
-    if (countryCode) searchUrl.searchParams.set("countryCode", countryCode);
+    if (countryCode && countryCode !== "all") searchUrl.searchParams.set("countryCode", countryCode);
     if (categoryId) searchUrl.searchParams.set("categoryId", categoryId);
 
-    const searchRes2 = await fetch(searchUrl.toString(), {
+    const searchRes = await fetch(searchUrl.toString(), {
       headers: { "CJ-Access-Token": token },
     });
-    const searchData = await searchRes2.json();
+    const searchData = await searchRes.json();
 
     if (searchData.code !== 200) throw new Error(searchData.message || "CJ search failed");
 
