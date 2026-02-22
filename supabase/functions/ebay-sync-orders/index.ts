@@ -36,7 +36,6 @@ Deno.serve(async (req) => {
     let updated = 0;
     let total = 0;
     let detectedSellerUserId = "";
-    let total = 0;
 
     while (hasMore) {
       const xml = await ebayTradingCall({
