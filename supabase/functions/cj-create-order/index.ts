@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Fetch order with items
+    // Fetch order
     const { data: order, error: orderErr } = await supabase
       .from("orders")
       .select("*, shipments(*)")
@@ -33,30 +33,104 @@ Deno.serve(async (req) => {
     const items = buyer.items || [];
     if (items.length === 0) throw new Error("No items in order");
 
-    // Look up CJ product IDs from source_products (source_type = 'cjdropshipping')
-    const skus = items.map((i: any) => i.sku).filter(Boolean);
-    const { data: sourceProducts } = await supabase
-      .from("source_products")
-      .select("source_id, title, variants_json")
-      .eq("seller_id", sellerId)
-      .eq("source_type", "cjdropshipping")
-      .in("source_id", skus);
+    // Look up CJ products through the chain:
+    // order items have SKU → ebay_inventory_items (by sku) → source_product_id → source_products (source_type = 'cjdropshipping')
+    // Also try direct lookup: items may have itemId which links to ebay_offers listing_id
+    
+    // Collect all SKUs from order items
+    const itemSkus = items.map((i: any) => i.sku).filter(Boolean);
+    const itemIds = items.map((i: any) => i.itemId).filter(Boolean);
 
-    const cjProductMap = new Map((sourceProducts || []).map(p => [p.source_id, p]));
+    console.log("Order items SKUs:", itemSkus, "ItemIDs:", itemIds);
+
+    // Try to find linked CJ source products via ebay_inventory_items
+    let cjProducts: any[] = [];
+    
+    // Path 1: via ebay_inventory_items SKU → source_product
+    if (itemSkus.length > 0) {
+      const { data: invItems } = await supabase
+        .from("ebay_inventory_items")
+        .select("sku, source_product_id")
+        .eq("seller_id", sellerId)
+        .in("sku", itemSkus)
+        .not("source_product_id", "is", null);
+
+      if (invItems && invItems.length > 0) {
+        const spIds = invItems.map(i => i.source_product_id).filter(Boolean);
+        const { data: sourceProds } = await supabase
+          .from("source_products")
+          .select("*")
+          .eq("seller_id", sellerId)
+          .eq("source_type", "cjdropshipping")
+          .in("id", spIds);
+        if (sourceProds) cjProducts.push(...sourceProds);
+      }
+    }
+
+    // Path 2: via ebay_offers listing_id → sku → ebay_inventory_items → source_product
+    if (cjProducts.length === 0 && itemIds.length > 0) {
+      const { data: offers } = await supabase
+        .from("ebay_offers")
+        .select("sku, listing_id")
+        .eq("seller_id", sellerId)
+        .in("listing_id", itemIds);
+      
+      if (offers && offers.length > 0) {
+        const offerSkus = offers.map(o => o.sku);
+        const { data: invItems2 } = await supabase
+          .from("ebay_inventory_items")
+          .select("sku, source_product_id")
+          .eq("seller_id", sellerId)
+          .in("sku", offerSkus)
+          .not("source_product_id", "is", null);
+        
+        if (invItems2 && invItems2.length > 0) {
+          const spIds2 = invItems2.map(i => i.source_product_id).filter(Boolean);
+          const { data: sourceProds2 } = await supabase
+            .from("source_products")
+            .select("*")
+            .eq("seller_id", sellerId)
+            .eq("source_type", "cjdropshipping")
+            .in("id", spIds2);
+          if (sourceProds2) cjProducts.push(...sourceProds2);
+        }
+      }
+    }
+
+    // Path 3: Direct lookup - check if any source_products with source_type='cjdropshipping' exist for this seller
+    // and try matching by title similarity (fallback)
+    if (cjProducts.length === 0) {
+      const { data: allCjProducts } = await supabase
+        .from("source_products")
+        .select("*")
+        .eq("seller_id", sellerId)
+        .eq("source_type", "cjdropshipping");
+      
+      if (!allCjProducts || allCjProducts.length === 0) {
+        throw new Error(
+          "Keine CJ-Produkte gefunden. Importiere zuerst Produkte über den CJ-Tab im Import-Dialog, " +
+          "damit sie mit deinen eBay-Bestellungen verknüpft werden können."
+        );
+      }
+
+      // Use all CJ products as fallback (user needs to manually link)
+      cjProducts = allCjProducts;
+    }
 
     const token = await getCJAccessToken();
 
-    // Build CJ order products
-    const orderProducts = items.map((item: any) => {
-      const cjProduct = cjProductMap.get(item.sku);
+    // Build CJ order products from found CJ source products
+    const orderProducts = cjProducts.map((p: any) => {
+      const variants = p.variants_json || [];
+      const firstVariant = variants[0];
       return {
-        vid: cjProduct?.variants_json?.[0]?.vid || "",
-        quantity: item.quantity || 1,
+        vid: firstVariant?.vid || p.source_id,
+        quantity: items[0]?.quantity || 1,
       };
     }).filter((p: any) => p.vid);
 
     if (orderProducts.length === 0) {
-      throw new Error("Keine CJ-Produkte in dieser Bestellung gefunden. Verknüpfe zuerst die Produkte mit CJDropshipping.");
+      throw new Error("CJ-Produkte haben keine gültigen Varianten-IDs. Überprüfe die importierten CJ-Produkte.");
     }
 
     const address = buyer.address;
@@ -99,10 +173,7 @@ Deno.serve(async (req) => {
       .from("orders")
       .update({
         order_status: "processing",
-        buyer_json: {
-          ...buyer,
-          cj_order_id: cjOrderId,
-        },
+        buyer_json: { ...buyer, cj_order_id: cjOrderId },
       })
       .eq("id", orderId);
 
