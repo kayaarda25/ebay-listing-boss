@@ -72,9 +72,10 @@ Deno.serve(async (req) => {
         let status = "pending";
         const orderStatus = xmlValue(orderXml, "OrderStatus") || "";
         const shippedTime = xmlValue(orderXml, "ShippedTime");
-        if (orderStatus === "Completed" && shippedTime) status = "shipped";
-        else if (orderStatus === "Completed") status = "pending";
-        else if (orderStatus === "Cancelled") status = "cancelled";
+        const paidTime = xmlValue(orderXml, "PaidTime");
+        if (orderStatus === "Cancelled") status = "cancelled";
+        else if (shippedTime) status = "shipped";
+        else if (orderStatus === "Completed" || paidTime) status = "pending"; // paid but not shipped
 
         const buyerJson = { username: buyerUserId, email, name: buyerName };
         console.log(`Order ${orderId}: €${totalPrice} ${currency}, buyer=${buyerUserId}, name=${buyerName}, status=${orderStatus}`);
