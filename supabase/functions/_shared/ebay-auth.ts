@@ -53,20 +53,26 @@ export async function ebayTradingCall({ callName, body, siteId = "77" }: EbayTra
   return text;
 }
 
-// Simple XML value extractor
+// Simple XML value extractor (handles tags with attributes like <Total currencyID="EUR">29.99</Total>)
 export function xmlValue(xml: string, tag: string): string | null {
-  const match = xml.match(new RegExp(`<${tag}>(.*?)</${tag}>`, "s"));
+  const match = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([^<]*)</${tag}>`, "s"));
+  return match ? match[1].trim() : null;
+}
+
+// Extract attribute from a tag
+export function xmlAttr(xml: string, tag: string, attr: string): string | null {
+  const match = xml.match(new RegExp(`<${tag}\\s[^>]*${attr}="([^"]*)"`, "s"));
   return match ? match[1] : null;
 }
 
 // Extract all matches of a tag
 export function xmlValues(xml: string, tag: string): string[] {
-  const matches = [...xml.matchAll(new RegExp(`<${tag}>(.*?)</${tag}>`, "gs"))];
-  return matches.map(m => m[1]);
+  const matches = [...xml.matchAll(new RegExp(`<${tag}(?:\\s[^>]*)?>([^<]*)</${tag}>`, "gs"))];
+  return matches.map(m => m[1].trim());
 }
 
 // Extract blocks between tags
 export function xmlBlocks(xml: string, tag: string): string[] {
-  const matches = [...xml.matchAll(new RegExp(`<${tag}>(.*?)</${tag}>`, "gs"))];
+  const matches = [...xml.matchAll(new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "gs"))];
   return matches.map(m => m[1]);
 }

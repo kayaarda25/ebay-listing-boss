@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ebayTradingCall, xmlValue, xmlBlocks } from "../_shared/ebay-auth.ts";
+import { ebayTradingCall, xmlValue, xmlAttr, xmlBlocks } from "../_shared/ebay-auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -55,12 +55,19 @@ Deno.serve(async (req) => {
       total += orderBlocks.length;
 
       for (const orderXml of orderBlocks) {
+        // Debug: log first 500 chars of order XML
+        console.log("Order XML preview:", orderXml.substring(0, 500));
+
         const orderId = xmlValue(orderXml, "OrderID") || "";
-        const totalPrice = parseFloat(xmlValue(orderXml, "Total") || "0");
-        const currency = xmlValue(orderXml, "Total")?.match(/currencyID="(\w+)"/)?.[1] || "EUR";
+        const amountPaid = xmlValue(orderXml, "AmountPaid") || xmlValue(orderXml, "Total") || "0";
+        const totalPrice = parseFloat(amountPaid);
+        const currency = xmlAttr(orderXml, "AmountPaid", "currencyID") || xmlAttr(orderXml, "Total", "currencyID") || "EUR";
         const buyerUserId = xmlValue(orderXml, "BuyerUserID") || "";
-        const email = xmlValue(orderXml, "Email") || "";
-        const name = xmlValue(orderXml, "Name") || "";
+
+        // Buyer info is nested in ShippingAddress
+        const shippingBlock = xmlBlocks(orderXml, "ShippingAddress")[0] || "";
+        const buyerName = xmlValue(shippingBlock, "Name") || "";
+        const email = xmlValue(orderXml, "BuyerEmail") || xmlValue(orderXml, "Email") || "";
 
         let status = "pending";
         const orderStatus = xmlValue(orderXml, "OrderStatus") || "";
@@ -69,7 +76,8 @@ Deno.serve(async (req) => {
         else if (orderStatus === "Completed") status = "pending";
         else if (orderStatus === "Cancelled") status = "cancelled";
 
-        const buyerJson = { username: buyerUserId, email, name };
+        const buyerJson = { username: buyerUserId, email, name: buyerName };
+        console.log(`Order ${orderId}: €${totalPrice} ${currency}, buyer=${buyerUserId}, name=${buyerName}, status=${orderStatus}`);
 
         // Check if order exists
         const { data: existing } = await supabase
