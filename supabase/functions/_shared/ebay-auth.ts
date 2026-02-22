@@ -10,7 +10,16 @@ export async function getEbayAccessToken(): Promise<string> {
     throw new Error("eBay API credentials not configured");
   }
 
+  console.log(`Using Client ID: ${clientId.substring(0, 8)}...`);
+  console.log(`Refresh Token starts with: ${refreshToken.substring(0, 10)}...`);
+
   const credentials = btoa(`${clientId}:${clientSecret}`);
+
+  // Use minimal scope - eBay requires the scopes to match what was granted
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+  });
 
   const response = await fetch(EBAY_AUTH_URL, {
     method: "POST",
@@ -18,18 +27,16 @@ export async function getEbayAccessToken(): Promise<string> {
       "Authorization": `Basic ${credentials}`,
       "Content-Type": "application/x-www-form-urlencoded",
     },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      scope: "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.fulfillment https://api.ebay.com/oauth/api_scope/sell.account",
-    }),
+    body,
   });
 
   const data = await response.json();
   if (!response.ok) {
+    console.error("eBay OAuth response:", JSON.stringify(data));
     throw new Error(`eBay OAuth failed [${response.status}]: ${JSON.stringify(data)}`);
   }
 
+  console.log("eBay access token obtained successfully");
   return data.access_token;
 }
 
