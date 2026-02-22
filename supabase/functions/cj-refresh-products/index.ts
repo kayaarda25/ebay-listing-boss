@@ -17,10 +17,22 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Get seller pricing settings
+    const { data: sellerData } = await supabase
+      .from("sellers")
+      .select("pricing_settings")
+      .eq("id", sellerId)
+      .maybeSingle();
+    const pricingDefaults = {
+      margin_percent: 20, shipping_cost: 4.99, ebay_fee_percent: 13,
+      paypal_fee_percent: 2.49, paypal_fee_fixed: 0.35, additional_costs: 0,
+    };
+    const pricingConfig = { ...pricingDefaults, ...(sellerData?.pricing_settings || {}) };
+
     // Get all CJ products for this seller
     const { data: products, error } = await supabase
       .from("source_products")
-      .select("id, source_id, attributes_json")
+      .select("id, source_id, attributes_json, price_source")
       .eq("seller_id", sellerId)
       .eq("source_type", "cjdropshipping");
 
@@ -33,6 +45,14 @@ Deno.serve(async (req) => {
 
     const token = await getCJAccessToken();
     let updated = 0;
+
+    // Helper to calculate eBay price
+    function calcEbayPrice(cost: number) {
+      const totalCost = cost + pricingConfig.shipping_cost + pricingConfig.additional_costs;
+      const costWithMargin = totalCost * (1 + pricingConfig.margin_percent / 100);
+      const totalFeePercent = (pricingConfig.ebay_fee_percent + pricingConfig.paypal_fee_percent) / 100;
+      return Math.ceil(((costWithMargin + pricingConfig.paypal_fee_fixed) / (1 - totalFeePercent)) * 100) / 100;
+    }
 
     for (const product of products) {
       try {
@@ -64,9 +84,14 @@ Deno.serve(async (req) => {
           category: detail.categoryName || existing.category || null,
         };
 
+        const price = detail.sellPrice || detail.productPrice || product.price_source;
+        const ebayPrice = price ? calcEbayPrice(Number(price)) : null;
+
         await supabase.from("source_products").update({
           attributes_json: updatedAttrs,
           stock_source: detail.productStock ?? undefined,
+          price_source: price || undefined,
+          price_ebay: ebayPrice,
         }).eq("id", product.id);
 
         updated++;

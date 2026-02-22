@@ -56,7 +56,7 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
   const [cjProducts, setCjProducts] = useState<any[]>([]);
   const [cjImporting, setCjImporting] = useState<string | null>(null);
   const [cjWarehouseFilter, setCjWarehouseFilter] = useState("all");
-  const [cjCountry, setCjCountry] = useState("DE");
+  const [cjCountry, setCjCountry] = useState("all");
 
   const detectedAsins = input.trim() ? extractAsins(input) : [];
 
