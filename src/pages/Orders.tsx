@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { fetchOrders } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Send, CheckCircle, Loader2, Plus, Truck, RefreshCw } from "lucide-react";
+import { Search, Send, CheckCircle, Loader2, Plus, Truck, RefreshCw, ChevronDown, ChevronUp, MapPin, Package } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
@@ -27,6 +27,7 @@ const OrdersPage = () => {
   const [carrier, setCarrier] = useState("DHL");
   const [addingTracking, setAddingTracking] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   async function handleSyncOrders() {
     if (!sellerId) return;
@@ -95,10 +96,12 @@ const OrdersPage = () => {
   });
 
   const filtered = orders.filter((o) => {
-    const buyerEmail = (o.buyer_json as Record<string, Json> | null)?.email as string || "";
-    const buyerName = (o.buyer_json as Record<string, Json> | null)?.name as string || "";
-    const buyerUsername = (o.buyer_json as Record<string, Json> | null)?.username as string || "";
-    const searchText = `${o.order_id} ${buyerName} ${buyerUsername} ${buyerEmail}`.toLowerCase();
+    const buyer = o.buyer_json as Record<string, Json> | null;
+    const buyerName = (buyer?.name as string) || "";
+    const buyerUsername = (buyer?.username as string) || "";
+    const items = (buyer?.items as any[]) || [];
+    const itemTitles = items.map(i => i.title || "").join(" ");
+    const searchText = `${o.order_id} ${buyerName} ${buyerUsername} ${itemTitles}`.toLowerCase();
     const matchSearch = searchText.includes(search.toLowerCase());
     const matchStatus = statusFilter === "all" || o.order_status === statusFilter;
     return matchSearch && matchStatus;
@@ -129,7 +132,7 @@ const OrdersPage = () => {
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Order ID suchen..."
+              placeholder="Order ID, Käufer oder Produkt suchen..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 bg-card border border-border/60 rounded-xl text-[14px] text-foreground placeholder:text-muted-foreground transition-all duration-200"
@@ -164,8 +167,10 @@ const OrdersPage = () => {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th className="w-8"></th>
                     <th>Order ID</th>
-                    <th>Buyer</th>
+                    <th>Produkt(e)</th>
+                    <th>Käufer</th>
                     <th>Status</th>
                     <th>Gesamt</th>
                     <th>Tracking</th>
@@ -175,54 +180,183 @@ const OrdersPage = () => {
                 </thead>
                 <tbody>
                   {filtered.map((order) => {
-                    const buyer = order.buyer_json as Record<string, Json> | null;
-                    const buyerName = (buyer?.name as string) || (buyer?.username as string) || (buyer?.email as string) || "—";
-                    const buyerUsername = buyer?.username as string || "";
+                    const buyer = order.buyer_json as Record<string, any> | null;
+                    const buyerName = buyer?.name || buyer?.username || "—";
+                    const buyerUsername = buyer?.username || "";
+                    const address = buyer?.address as any;
+                    const items = (buyer?.items as any[]) || [];
                     const shipment = (order as any).shipments?.[0];
+                    const isExpanded = expandedId === order.id;
+
                     return (
-                      <tr key={order.id}>
-                        <td className="font-mono text-xs">{order.order_id}</td>
-                        <td className="text-[14px]">
-                          <div>{buyerName}</div>
-                          {buyerUsername && buyerUsername !== buyerName && (
-                            <div className="text-xs text-muted-foreground">{buyerUsername}</div>
-                          )}
-                        </td>
-                        <td>
-                          <span className={`status-badge ${order.order_status === 'delivered' ? 'status-active' : order.order_status === 'shipped' ? 'status-pending' : order.order_status === 'cancelled' ? 'status-error' : 'status-paused'}`}>
-                            {order.order_status}
-                          </span>
-                        </td>
-                        <td className="font-mono">€{(order.total_price ?? 0).toFixed(2)}</td>
-                        <td>
-                          {shipment ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-mono text-xs">{shipment.tracking_number}</span>
-                              {shipment.tracking_pushed && <CheckCircle className="w-3.5 h-3.5 text-success" />}
-                            </div>
-                          ) : <span className="text-xs text-muted-foreground">—</span>}
-                        </td>
-                        <td className="text-xs text-muted-foreground">{new Date(order.created_at).toLocaleString("de-DE")}</td>
-                        <td>
-                          {shipment && !shipment.tracking_pushed ? (
-                            <button
-                              onClick={() => handlePushTracking(shipment)}
-                              disabled={pushingId === shipment.id}
-                              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 transition-all duration-200 shadow-apple-sm disabled:opacity-50"
+                      <>
+                        <tr
+                          key={order.id}
+                          className="cursor-pointer"
+                          onClick={() => setExpandedId(isExpanded ? null : order.id)}
+                        >
+                          <td className="w-8 text-center">
+                            {isExpanded ? (
+                              <ChevronUp className="w-4 h-4 text-muted-foreground inline" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4 text-muted-foreground inline" />
+                            )}
+                          </td>
+                          <td className="font-mono text-xs">{order.order_id}</td>
+                          <td className="max-w-[200px]">
+                            {items.length > 0 ? (
+                              <div>
+                                <p className="text-[13px] font-medium text-foreground truncate">
+                                  {items[0].title || items[0].sku || "—"}
+                                </p>
+                                {items.length > 1 && (
+                                  <p className="text-xs text-muted-foreground">
+                                    +{items.length - 1} weitere
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="text-[14px]">
+                            <div>{buyerName}</div>
+                            {buyerUsername && buyerUsername !== buyerName && (
+                              <div className="text-xs text-muted-foreground">{buyerUsername}</div>
+                            )}
+                          </td>
+                          <td>
+                            <span
+                              className={`status-badge ${
+                                order.order_status === "delivered"
+                                  ? "status-active"
+                                  : order.order_status === "shipped"
+                                  ? "status-pending"
+                                  : order.order_status === "cancelled"
+                                  ? "status-error"
+                                  : "status-paused"
+                              }`}
                             >
-                              {pushingId === shipment.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                              {pushingId === shipment.id ? "Pushing..." : "Push"}
-                            </button>
-                          ) : !shipment && order.order_status === "pending" ? (
-                            <button
-                              onClick={() => setTrackingDialog(order)}
-                              className="flex items-center gap-1.5 px-3.5 py-1.5 border border-border text-foreground text-xs font-semibold rounded-lg hover:bg-muted transition-all duration-200"
-                            >
-                              <Plus className="w-3 h-3" /> Tracking
-                            </button>
-                          ) : null}
-                        </td>
-                      </tr>
+                              {order.order_status}
+                            </span>
+                          </td>
+                          <td className="font-mono font-semibold">€{(order.total_price ?? 0).toFixed(2)}</td>
+                          <td>
+                            {shipment ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono text-xs">{shipment.tracking_number}</span>
+                                {shipment.tracking_pushed && (
+                                  <CheckCircle className="w-3.5 h-3.5 text-success" />
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="text-xs text-muted-foreground">
+                            {new Date(order.created_at).toLocaleString("de-DE")}
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            {shipment && !shipment.tracking_pushed ? (
+                              <button
+                                onClick={() => handlePushTracking(shipment)}
+                                disabled={pushingId === shipment.id}
+                                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 transition-all duration-200 shadow-apple-sm disabled:opacity-50"
+                              >
+                                {pushingId === shipment.id ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Send className="w-3 h-3" />
+                                )}
+                                Push
+                              </button>
+                            ) : !shipment && order.order_status === "pending" ? (
+                              <button
+                                onClick={() => setTrackingDialog(order)}
+                                className="flex items-center gap-1.5 px-3.5 py-1.5 border border-border text-foreground text-xs font-semibold rounded-lg hover:bg-muted transition-all duration-200"
+                              >
+                                <Plus className="w-3 h-3" /> Tracking
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr key={`${order.id}-detail`}>
+                            <td colSpan={9} className="!p-0">
+                              <div className="bg-muted/30 border-t border-border/40 px-6 py-4 space-y-4">
+                                {/* Artikel */}
+                                {items.length > 0 && (
+                                  <div>
+                                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                                      <Package className="w-3.5 h-3.5" /> Bestellte Artikel
+                                    </h4>
+                                    <div className="space-y-2">
+                                      {items.map((item: any, idx: number) => (
+                                        <div
+                                          key={idx}
+                                          className="flex items-center justify-between bg-card rounded-xl px-4 py-2.5 border border-border/40"
+                                        >
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-[13px] font-medium text-foreground truncate">
+                                              {item.title || "Unbekanntes Produkt"}
+                                            </p>
+                                            <div className="flex items-center gap-3 mt-0.5">
+                                              {item.sku && (
+                                                <span className="text-xs font-mono text-muted-foreground">
+                                                  SKU: {item.sku}
+                                                </span>
+                                              )}
+                                              {item.itemId && (
+                                                <a
+                                                  href={`https://www.ebay.de/itm/${item.itemId}`}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                  className="text-xs text-primary hover:underline"
+                                                >
+                                                  eBay #{item.itemId}
+                                                </a>
+                                              )}
+                                            </div>
+                                          </div>
+                                          <div className="text-right ml-4">
+                                            <span className="text-[13px] font-mono font-semibold">
+                                              €{Number(item.price || 0).toFixed(2)}
+                                            </span>
+                                            <span className="text-xs text-muted-foreground ml-2">
+                                              × {item.quantity || 1}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Lieferadresse */}
+                                {address && (address.street1 || address.city) && (
+                                  <div>
+                                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                                      <MapPin className="w-3.5 h-3.5" /> Lieferadresse
+                                    </h4>
+                                    <div className="bg-card rounded-xl px-4 py-3 border border-border/40 text-[13px] text-foreground leading-relaxed">
+                                      <p className="font-medium">{buyerName}</p>
+                                      {address.street1 && <p>{address.street1}</p>}
+                                      {address.street2 && <p>{address.street2}</p>}
+                                      <p>
+                                        {address.postalCode} {address.city}
+                                      </p>
+                                      {address.country && <p>{address.country}</p>}
+                                      {address.phone && address.phone !== "Invalid Request" && (
+                                        <p className="text-muted-foreground mt-1">Tel: {address.phone}</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
                     );
                   })}
                 </tbody>
@@ -230,6 +364,7 @@ const OrdersPage = () => {
             </div>
           )}
         </div>
+
         {/* Add Tracking Dialog */}
         <Dialog open={!!trackingDialog} onOpenChange={(open) => !open && setTrackingDialog(null)}>
           <DialogContent className="sm:max-w-md rounded-2xl">

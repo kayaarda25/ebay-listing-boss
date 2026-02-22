@@ -64,9 +64,15 @@ Deno.serve(async (req) => {
         const currency = xmlAttr(orderXml, "AmountPaid", "currencyID") || xmlAttr(orderXml, "Total", "currencyID") || "EUR";
         const buyerUserId = xmlValue(orderXml, "BuyerUserID") || "";
 
-        // Buyer info is nested in ShippingAddress
+        // Buyer & shipping address
         const shippingBlock = xmlBlocks(orderXml, "ShippingAddress")[0] || "";
         const buyerName = xmlValue(shippingBlock, "Name") || "";
+        const street1 = xmlValue(shippingBlock, "Street1") || "";
+        const street2 = xmlValue(shippingBlock, "Street2") || "";
+        const city = xmlValue(shippingBlock, "CityName") || "";
+        const postalCode = xmlValue(shippingBlock, "PostalCode") || "";
+        const country = xmlValue(shippingBlock, "CountryName") || xmlValue(shippingBlock, "Country") || "";
+        const phone = xmlValue(shippingBlock, "Phone") || "";
         const email = xmlValue(orderXml, "BuyerEmail") || xmlValue(orderXml, "Email") || "";
 
         let status = "pending";
@@ -75,10 +81,32 @@ Deno.serve(async (req) => {
         const paidTime = xmlValue(orderXml, "PaidTime");
         if (orderStatus === "Cancelled") status = "cancelled";
         else if (shippedTime) status = "shipped";
-        else if (orderStatus === "Completed" || paidTime) status = "pending"; // paid but not shipped
+        else if (orderStatus === "Completed" || paidTime) status = "pending";
 
-        const buyerJson = { username: buyerUserId, email, name: buyerName };
-        console.log(`Order ${orderId}: €${totalPrice} ${currency}, buyer=${buyerUserId}, name=${buyerName}, status=${orderStatus}`);
+        // Extract item titles from transactions
+        const transactionBlocks = xmlBlocks(orderXml, "Transaction");
+        const items = transactionBlocks.map(tx => {
+          const itemBlock = xmlBlocks(tx, "Item")[0] || tx;
+          return {
+            title: xmlValue(itemBlock, "Title") || "",
+            itemId: xmlValue(itemBlock, "ItemID") || "",
+            sku: xmlValue(tx, "SKU") || xmlValue(itemBlock, "SKU") || "",
+            quantity: parseInt(xmlValue(tx, "QuantityPurchased") || "1"),
+            price: parseFloat(xmlValue(tx, "TransactionPrice") || "0"),
+            lineItemId: xmlValue(tx, "OrderLineItemID") || "",
+          };
+        });
+
+        const buyerJson = {
+          username: buyerUserId,
+          email,
+          name: buyerName,
+          address: {
+            street1, street2, city, postalCode, country, phone,
+          },
+          items: items.map(i => ({ title: i.title, itemId: i.itemId, sku: i.sku, quantity: i.quantity, price: i.price })),
+        };
+        console.log(`Order ${orderId}: €${totalPrice} ${currency}, buyer=${buyerUserId}, name=${buyerName}, items=${items.length}, status=${orderStatus}`);
 
         // Check if order exists
         const { data: existing } = await supabase
@@ -108,22 +136,16 @@ Deno.serve(async (req) => {
             last_synced_at: new Date().toISOString(),
           }).select('id').single();
 
-          // Insert order items (line items)
+          // Insert order items from pre-parsed items
           if (newOrder) {
-            const transactionBlocks = xmlBlocks(orderXml, "Transaction");
-            for (const txXml of transactionBlocks) {
-              const sku = xmlValue(txXml, "SKU") || null;
-              const lineItemId = xmlValue(txXml, "OrderLineItemID") || null;
-              const qty = parseInt(xmlValue(txXml, "QuantityPurchased") || "1");
-              const itemPrice = parseFloat(xmlValue(txXml, "TransactionPrice") || "0");
-
+            for (const item of items) {
               await supabase.from('order_items').insert({
                 order_id: newOrder.id,
                 seller_id: sellerId,
-                sku,
-                line_item_id: lineItemId,
-                quantity: qty,
-                price: itemPrice,
+                sku: item.sku || null,
+                line_item_id: item.lineItemId || null,
+                quantity: item.quantity,
+                price: item.price,
               });
             }
           }
