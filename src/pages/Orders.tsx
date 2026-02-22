@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { fetchOrders } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Send, CheckCircle, Loader2, Plus, Truck } from "lucide-react";
+import { Search, Send, CheckCircle, Loader2, Plus, Truck, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
@@ -26,6 +26,25 @@ const OrdersPage = () => {
   const [trackingNumber, setTrackingNumber] = useState("");
   const [carrier, setCarrier] = useState("DHL");
   const [addingTracking, setAddingTracking] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  async function handleSyncOrders() {
+    if (!sellerId) return;
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("ebay-sync-orders", {
+        body: { sellerId },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Sync fehlgeschlagen");
+      toast.success(`Orders synchronisiert: ${data.message}`);
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    } catch (err: any) {
+      toast.error(err.message || "Order-Sync fehlgeschlagen");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function handlePushTracking(shipment: any) {
     if (!sellerId) return;
@@ -87,11 +106,21 @@ const OrdersPage = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-slide-in">
-        <div>
-          <h1 className="text-[28px] font-bold text-foreground tracking-tight">Orders</h1>
-          <p className="text-[15px] text-muted-foreground mt-1">
-            {orders.length} Orders · {orders.filter((o) => o.order_status === "pending").length} ausstehend
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-[28px] font-bold text-foreground tracking-tight">Orders</h1>
+            <p className="text-[15px] text-muted-foreground mt-1">
+              {orders.length} Orders · {orders.filter((o) => o.order_status === "pending").length} ausstehend
+            </p>
+          </div>
+          <button
+            onClick={handleSyncOrders}
+            disabled={syncing}
+            className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground text-[14px] font-semibold rounded-xl hover:bg-primary/90 transition-all duration-200 shadow-apple-sm disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? "Synchronisiere..." : "Orders von eBay laden"}
+          </button>
         </div>
 
         <div className="flex items-center gap-3">
