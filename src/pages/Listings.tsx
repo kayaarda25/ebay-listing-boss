@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { fetchListings } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, ExternalLink, Loader2, Upload, Pause } from "lucide-react";
+import { Search, Plus, ExternalLink, Loader2, Upload, Pause, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -15,6 +15,25 @@ const ListingsPage = () => {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  async function handleSyncListings() {
+    if (!sellerId) return;
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("ebay-sync-listings", {
+        body: { sellerId },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Sync fehlgeschlagen");
+      toast.success(data.message);
+      queryClient.invalidateQueries({ queryKey: ["listings"] });
+    } catch (err: any) {
+      toast.error(err.message || "Fehler beim Sync");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const { data: listings = [], isLoading } = useQuery({
     queryKey: ["listings", sellerId],
@@ -74,13 +93,23 @@ const ListingsPage = () => {
               {listings.length} Listings gesamt
             </p>
           </div>
-          <button
-            onClick={() => setCreateOpen(true)}
-            className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground text-[14px] font-semibold rounded-xl hover:bg-primary/90 transition-all duration-200 shadow-apple-sm"
-          >
-            <Plus className="w-4 h-4" />
-            Listing erstellen
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleSyncListings}
+              disabled={syncing}
+              className="flex items-center gap-2 px-4 py-2.5 border border-border/60 text-foreground text-[14px] font-semibold rounded-xl hover:bg-muted transition-all duration-200 disabled:opacity-50"
+            >
+              {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              eBay Sync
+            </button>
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground text-[14px] font-semibold rounded-xl hover:bg-primary/90 transition-all duration-200 shadow-apple-sm"
+            >
+              <Plus className="w-4 h-4" />
+              Listing erstellen
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
