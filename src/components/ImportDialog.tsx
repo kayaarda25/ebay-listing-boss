@@ -51,7 +51,13 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
         body: { query: cjQuery.trim() },
       });
       if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || "CJ Suche fehlgeschlagen");
+      if (!data?.success) {
+        const errMsg = data?.error || "CJ Suche fehlgeschlagen";
+        if (errMsg.includes("Too Many Requests") || errMsg.includes("QPS limit")) {
+          throw new Error("CJ Rate-Limit erreicht. Bitte warte 5 Minuten und versuche es erneut.");
+        }
+        throw new Error(errMsg);
+      }
       setCjProducts(data.products || []);
       if ((data.products || []).length === 0) toast.info("Keine CJ-Produkte gefunden");
     } catch (err: any) {
