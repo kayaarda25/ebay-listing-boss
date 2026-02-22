@@ -35,6 +35,8 @@ Deno.serve(async (req) => {
     let imported = 0;
     let updated = 0;
     let total = 0;
+    let detectedSellerUserId = "";
+    let total = 0;
 
     while (hasMore) {
       const xml = await ebayTradingCall({
@@ -53,6 +55,11 @@ Deno.serve(async (req) => {
 
       const orderBlocks = xmlBlocks(xml, "Order");
       total += orderBlocks.length;
+
+      // Capture seller user ID from first order
+      if (!detectedSellerUserId && orderBlocks.length > 0) {
+        detectedSellerUserId = xmlValue(orderBlocks[0], "SellerUserID") || xmlValue(orderBlocks[0], "SellerID") || "";
+      }
 
       for (const orderXml of orderBlocks) {
         // Debug: log first 500 chars of order XML
@@ -158,20 +165,16 @@ Deno.serve(async (req) => {
       pageNumber++;
     }
 
-    // Auto-detect eBay User ID from the first order's SellerID field
-    if (total > 0) {
-      const firstOrder = xmlBlocks(xml, "Order")[0] || "";
-      const sellerUserId = xmlValue(firstOrder, "SellerUserID") || xmlValue(firstOrder, "SellerID") || "";
-      if (sellerUserId) {
-        const { data: currentSeller } = await supabase
-          .from('sellers')
-          .select('ebay_user_id')
-          .eq('id', sellerId)
-          .maybeSingle();
-        if (currentSeller && !currentSeller.ebay_user_id) {
-          await supabase.from('sellers').update({ ebay_user_id: sellerUserId }).eq('id', sellerId);
-          console.log(`Set ebay_user_id to ${sellerUserId} for seller ${sellerId}`);
-        }
+    // Auto-detect eBay User ID
+    if (detectedSellerUserId) {
+      const { data: currentSeller } = await supabase
+        .from('sellers')
+        .select('ebay_user_id')
+        .eq('id', sellerId)
+        .maybeSingle();
+      if (currentSeller && !currentSeller.ebay_user_id) {
+        await supabase.from('sellers').update({ ebay_user_id: detectedSellerUserId }).eq('id', sellerId);
+        console.log(`Set ebay_user_id to ${detectedSellerUserId} for seller ${sellerId}`);
       }
     }
 
