@@ -164,8 +164,9 @@ const ProductsPage = () => {
               const reviewCount = getAttr(p, "review_count");
               const availability = getAttr(p, "availability");
               const warehouse = getAttr(p, "warehouse");
-              const shippingTime = getAttr(p, "shipping_time");
-              const shippingCost = getAttr(p, "shipping_cost");
+              const shippingTime = getAttr(p, "shipping_time_de") || getAttr(p, "shipping_time");
+              const shippingCost = getAttr(p, "shipping_cost_de") || getAttr(p, "shipping_cost");
+              const shippingMethod = getAttr(p, "shipping_method");
               const weight = getAttr(p, "weight") || getAttr(p, "packing_weight");
               const category = getAttr(p, "category");
               const material = getAttr(p, "material");
