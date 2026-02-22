@@ -195,6 +195,7 @@ const ListingsPage = () => {
                   <tr>
                     <th>Produkt</th>
                     <th>Status</th>
+                    <th>EK</th>
                     <th>Preis</th>
                     <th>Menge</th>
                     <th>Quelle</th>
@@ -244,6 +245,16 @@ const ListingsPage = () => {
                           >
                             {l.state}
                           </span>
+                        </td>
+                        {/* EK */}
+                        <td>
+                          {(l as any).purchase_price != null ? (
+                            <span className="font-mono text-[13px] text-muted-foreground">
+                              €{Number((l as any).purchase_price).toFixed(2)}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
 
                         {/* Preis */}

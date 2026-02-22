@@ -31,12 +31,25 @@ export async function fetchDashboardStats(sellerId: string) {
 }
 
 export async function fetchListings(sellerId: string) {
-  const { data } = await supabase
-    .from("ebay_offers")
-    .select("*")
-    .eq("seller_id", sellerId)
-    .order("created_at", { ascending: false });
-  return data || [];
+  const [offersRes, productsRes] = await Promise.all([
+    supabase
+      .from("ebay_offers")
+      .select("*")
+      .eq("seller_id", sellerId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("source_products")
+      .select("source_id, price_source")
+      .eq("seller_id", sellerId),
+  ]);
+  const offers = offersRes.data || [];
+  const priceMap = new Map(
+    (productsRes.data || []).map((p) => [p.source_id, p.price_source])
+  );
+  return offers.map((o) => ({
+    ...o,
+    purchase_price: priceMap.get(o.sku) ?? null,
+  }));
 }
 
 export async function fetchOrders(sellerId: string) {
