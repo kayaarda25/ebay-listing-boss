@@ -67,7 +67,13 @@ export function VariantManager({ variants, onChange, readOnly }: VariantManagerP
     onChange(updated);
   }
 
-  if (readOnly && variants.length === 0) {
+  // Normalize: ensure every group has a values array
+  const safeVariants = variants.map((g) => ({
+    ...g,
+    values: Array.isArray(g.values) ? g.values : [],
+  }));
+
+  if (readOnly && safeVariants.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">Keine Varianten vorhanden.</p>
     );
@@ -75,7 +81,7 @@ export function VariantManager({ variants, onChange, readOnly }: VariantManagerP
 
   return (
     <div className="space-y-4">
-      {variants.map((group, gi) => (
+      {safeVariants.map((group, gi) => (
         <div key={gi} className="rounded-xl border border-border/60 bg-card p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
