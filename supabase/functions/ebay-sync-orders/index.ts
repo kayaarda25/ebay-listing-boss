@@ -136,6 +136,23 @@ Deno.serve(async (req) => {
       pageNumber++;
     }
 
+    // Auto-detect eBay User ID from the first order's SellerID field
+    if (total > 0) {
+      const firstOrder = xmlBlocks(xml, "Order")[0] || "";
+      const sellerUserId = xmlValue(firstOrder, "SellerUserID") || xmlValue(firstOrder, "SellerID") || "";
+      if (sellerUserId) {
+        const { data: currentSeller } = await supabase
+          .from('sellers')
+          .select('ebay_user_id')
+          .eq('id', sellerId)
+          .maybeSingle();
+        if (currentSeller && !currentSeller.ebay_user_id) {
+          await supabase.from('sellers').update({ ebay_user_id: sellerUserId }).eq('id', sellerId);
+          console.log(`Set ebay_user_id to ${sellerUserId} for seller ${sellerId}`);
+        }
+      }
+    }
+
     const message = `${imported} neu importiert, ${updated} aktualisiert (${total} gesamt)`;
     console.log(`Orders sync for ${sellerId}: ${message}`);
 
