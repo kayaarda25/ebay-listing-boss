@@ -25,6 +25,21 @@ function extractAsins(text: string): string[] {
   return Array.from(asins);
 }
 
+function extractWarehouses(product: any): string | null {
+  // CJ detail API may include supplier/warehouse info in various fields
+  if (product.sourceFrom) return product.sourceFrom;
+  if (product.warehouseName) return product.warehouseName;
+  if (product.supplierName) return product.supplierName;
+  // Check nested supplier info
+  if (product.supplierInfo?.warehouseLocation) return product.supplierInfo.warehouseLocation;
+  // Check variants for warehouse info
+  if (Array.isArray(product.variants)) {
+    const wh = product.variants.map((v: any) => v.warehouseName || v.sourceFrom).filter(Boolean);
+    if (wh.length > 0) return [...new Set(wh)].join(", ");
+  }
+  return null;
+}
+
 export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProps) {
   const { sellerId } = useAuth();
   const [tab, setTab] = useState<string>("amazon");
@@ -87,8 +102,19 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
         return;
       }
 
-      const images = product.productImageSet || product.productImage ? 
-        (product.productImageSet || [product.productImage]).filter(Boolean) : [];
+      // Fetch full product detail from CJ API for warehouse/shipping info
+      let detail: any = null;
+      try {
+        const { data: detailData } = await supabase.functions.invoke("cj-search-products", {
+          body: { productId: pid },
+        });
+        if (detailData?.success) detail = detailData.product;
+      } catch (e) { console.warn("CJ detail fetch failed:", e); }
+
+      const merged = { ...product, ...(detail || {}) };
+
+      const images = merged.productImageSet || merged.productImage ? 
+        (merged.productImageSet || [merged.productImage]).filter(Boolean) : [];
 
       // Fetch pricing settings
       const { data: sellerData } = await supabase
@@ -101,32 +127,36 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
         ...(sellerData?.pricing_settings as unknown as Partial<PricingConfig> || {}),
       };
 
-      const price = product.sellPrice || product.productPrice || null;
+      const price = merged.sellPrice || merged.productPrice || null;
       const ebayPrice = price ? calculateEbayPrice(price, pricingConfig).ebayPrice : null;
+
+      // Extract warehouse names from supplier info
+      const warehouses = extractWarehouses(merged);
 
       const { error: insertError } = await supabase.from("source_products").insert({
         seller_id: sellerId,
         source_type: "cjdropshipping",
         source_id: pid,
-        title: product.productNameEn || product.productName || `CJ ${pid}`,
-        description: product.description || product.productNameEn || "",
+        title: merged.productNameEn || merged.productName || `CJ ${pid}`,
+        description: merged.description || merged.productNameEn || "",
         price_source: price,
         price_ebay: ebayPrice,
         images_json: images,
-        stock_source: product.productStock || 0,
+        stock_source: merged.productStock || 0,
         attributes_json: {
-          brand: product.brandName || null,
-          weight: product.productWeight ? `${product.productWeight}g` : null,
-          category: product.categoryName || null,
+          brand: merged.brandName || null,
+          weight: merged.productWeight ? `${merged.productWeight}g` : null,
+          category: merged.categoryName || null,
           cj_product_id: pid,
-          warehouse: product.sourceFrom || product.warehouseName || null,
-          shipping_time: product.logisticAging || product.deliveryDays || null,
-          shipping_cost: product.logisticPrice || product.shippingPrice || null,
-          packing_weight: product.packingWeight ? `${product.packingWeight}g` : null,
-          dimensions: product.productUnit ? `${product.productUnit}` : null,
-          material: product.material || null,
+          warehouse: warehouses || merged.sourceFrom || null,
+          shipping_time: merged.logisticAging || merged.deliveryDays || null,
+          shipping_cost: merged.logisticPrice || merged.shippingPrice || null,
+          packing_weight: merged.packingWeight ? `${merged.packingWeight}g` : null,
+          dimensions: merged.productUnit ? `${merged.productUnit}` : null,
+          material: merged.material || null,
+          origin_country: merged.productFrom || null,
         },
-        variants_json: (product.variants || []).map((v: any) => ({
+        variants_json: (merged.variants || []).map((v: any) => ({
           vid: v.vid,
           name: v.variantNameEn || v.variantName,
           price: v.variantSellPrice || v.variantPrice,
