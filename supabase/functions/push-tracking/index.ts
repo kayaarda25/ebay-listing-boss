@@ -1,8 +1,19 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getEbayAccessToken, EBAY_API_BASE } from "../_shared/ebay-auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+};
+
+const CARRIER_MAP: Record<string, string> = {
+  "DHL": "DHL",
+  "DPD": "DPD",
+  "Hermes": "Hermes",
+  "GLS": "GLS",
+  "UPS": "UPS",
+  "FedEx": "FedEx",
+  "Deutsche Post": "Deutsche_Post",
 };
 
 Deno.serve(async (req) => {
@@ -20,9 +31,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
 
     // Get shipment with order details
     const { data: shipment, error: shipmentError } = await supabase
@@ -46,44 +58,49 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get seller for eBay credentials
-    const { data: seller } = await supabase
-      .from('sellers')
-      .select('refresh_token_enc, marketplace')
-      .eq('id', sellerId)
-      .maybeSingle();
+    // Push tracking to eBay via Fulfillment API
+    const accessToken = await getEbayAccessToken();
+    const ebayOrderId = shipment.orders.order_id;
 
-    if (!seller?.refresh_token_enc) {
-      // No eBay connection - simulate success for demo
-      console.log(`[DEMO] Would push tracking ${shipment.tracking_number} (${shipment.carrier}) to eBay order ${shipment.orders.order_id}`);
-      
-      // Mark as pushed (demo mode)
-      await supabase
-        .from('shipments')
-        .update({ tracking_pushed: true })
-        .eq('id', shipmentId);
+    // Get line items from order_items
+    const { data: orderItems } = await supabase
+      .from('order_items')
+      .select('line_item_id, quantity')
+      .eq('order_id', shipment.order_id)
+      .eq('seller_id', sellerId);
 
-      // Update order status
-      await supabase
-        .from('orders')
-        .update({ order_status: 'shipped', needs_fulfillment: false })
-        .eq('id', shipment.order_id);
+    const lineItems = (orderItems || [])
+      .filter(i => i.line_item_id)
+      .map(i => ({ lineItemId: i.line_item_id, quantity: i.quantity }));
 
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message: `Tracking ${shipment.tracking_number} markiert als gepusht (Demo-Modus – eBay nicht verbunden)`,
-          demo: true,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    const fulfillmentPayload: any = {
+      trackingNumber: shipment.tracking_number,
+      shippingCarrierCode: CARRIER_MAP[shipment.carrier] || shipment.carrier,
+    };
+
+    if (lineItems.length > 0) {
+      fulfillmentPayload.lineItems = lineItems;
     }
 
-    // TODO: Real eBay API call with refresh_token_enc
-    // POST /sell/fulfillment/v1/order/{orderId}/shipping_fulfillment
-    // For now, mark as pushed
-    console.log(`Push tracking ${shipment.tracking_number} to eBay order ${shipment.orders.order_id}`);
+    const response = await fetch(
+      `${EBAY_API_BASE}/sell/fulfillment/v1/order/${ebayOrderId}/shipping_fulfillment`,
+      {
+        method: "POST",
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(fulfillmentPayload),
+      }
+    );
 
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`eBay Fulfillment API [${response.status}]: ${errText}`);
+    }
+    await response.text();
+
+    // Mark as pushed
     await supabase
       .from('shipments')
       .update({ tracking_pushed: true })

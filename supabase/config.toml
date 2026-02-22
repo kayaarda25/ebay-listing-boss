@@ -1,1 +1,28 @@
 project_id = "monvfebqfoitxvurgyml"
+
+[functions.ebay-sync-orders]
+verify_jwt = false
+
+[functions.ebay-publish-offer]
+verify_jwt = false
+
+[functions.push-tracking]
+verify_jwt = false
+
+[functions.sync-prices]
+verify_jwt = false
+
+[functions.scrape-amazon]
+verify_jwt = false
+
+[functions.delete-product]
+verify_jwt = false
+
+[functions.generate-product-image]
+verify_jwt = false
+
+[functions.optimize-listing]
+verify_jwt = false
+
+[functions.cron-sync-prices]
+verify_jwt = false

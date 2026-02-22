@@ -2,9 +2,11 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { CreateListingDialog } from "@/components/CreateListingDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchListings } from "@/lib/api";
+import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, ExternalLink } from "lucide-react";
+import { Search, Plus, ExternalLink, Loader2, Upload, Pause } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 const ListingsPage = () => {
   const { sellerId } = useAuth();
@@ -12,6 +14,7 @@ const ListingsPage = () => {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [actionId, setActionId] = useState<string | null>(null);
 
   const { data: listings = [], isLoading } = useQuery({
     queryKey: ["listings", sellerId],
@@ -24,6 +27,42 @@ const ListingsPage = () => {
     const matchStatus = statusFilter === "all" || l.state === statusFilter;
     return matchSearch && matchStatus;
   });
+
+  async function handlePublish(offerId: string) {
+    if (!sellerId) return;
+    setActionId(offerId);
+    try {
+      const { data, error } = await supabase.functions.invoke("ebay-publish-offer", {
+        body: { sellerId, offerId, action: "publish" },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Veröffentlichung fehlgeschlagen");
+      toast.success(data.message);
+      queryClient.invalidateQueries({ queryKey: ["listings"] });
+    } catch (err: any) {
+      toast.error(err.message || "Fehler beim Veröffentlichen");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function handleWithdraw(offerId: string) {
+    if (!sellerId) return;
+    setActionId(offerId);
+    try {
+      const { data, error } = await supabase.functions.invoke("ebay-publish-offer", {
+        body: { sellerId, offerId, action: "withdraw" },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Zurückziehen fehlgeschlagen");
+      toast.success(data.message);
+      queryClient.invalidateQueries({ queryKey: ["listings"] });
+    } catch (err: any) {
+      toast.error(err.message || "Fehler beim Zurückziehen");
+    } finally {
+      setActionId(null);
+    }
+  }
 
   return (
     <DashboardLayout>
@@ -91,6 +130,7 @@ const ListingsPage = () => {
                     <th>Offer ID</th>
                     <th>eBay Listing</th>
                     <th>Letzter Sync</th>
+                    <th>Aktion</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -114,6 +154,28 @@ const ListingsPage = () => {
                       </td>
                       <td className="text-xs text-muted-foreground">
                         {l.last_synced_at ? new Date(l.last_synced_at).toLocaleString("de-DE") : "—"}
+                      </td>
+                      <td>
+                        {(l.state === "draft" || l.state === "paused") && (
+                          <button
+                            onClick={() => handlePublish(l.id)}
+                            disabled={actionId === l.id}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 transition-all duration-200 shadow-apple-sm disabled:opacity-50"
+                          >
+                            {actionId === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                            Publish
+                          </button>
+                        )}
+                        {(l.state === "published" || l.state === "active") && (
+                          <button
+                            onClick={() => handleWithdraw(l.id)}
+                            disabled={actionId === l.id}
+                            className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-foreground text-xs font-semibold rounded-lg hover:bg-muted transition-all duration-200 disabled:opacity-50"
+                          >
+                            {actionId === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />}
+                            Withdraw
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
