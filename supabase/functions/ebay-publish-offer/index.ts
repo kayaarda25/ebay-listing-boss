@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getEbayAccessToken, EBAY_API_BASE } from "../_shared/ebay-auth.ts";
+import { ebayTradingCall, xmlValue } from "../_shared/ebay-auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,13 +19,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    const accessToken = await getEbayAccessToken();
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    // Get offer from DB
     const { data: offer, error: offerError } = await supabase
       .from('ebay_offers')
       .select('*')
@@ -39,7 +37,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get the source product for details
     const { data: product } = await supabase
       .from('source_products')
       .select('*')
@@ -47,153 +44,88 @@ Deno.serve(async (req) => {
       .eq('source_id', offer.sku)
       .maybeSingle();
 
-    const marketplace = "EBAY_DE";
-
     if (action === "publish" || action === "create") {
-      // Step 1: Create/Update Inventory Item
-      const inventoryPayload: any = {
-        availability: {
-          shipToLocationAvailability: {
-            quantity: offer.quantity || 1,
-          },
-        },
-        condition: "NEW",
-        product: {
-          title: product?.title || offer.sku,
-          description: product?.description || product?.title || offer.sku,
-          imageUrls: (product?.images_json as string[]) || [],
-        },
-      };
-
-      const invResponse = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/inventory_item/${offer.sku}`, {
-        method: "PUT",
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          'Content-Language': 'de-DE',
-        },
-        body: JSON.stringify(inventoryPayload),
-      });
-
-      if (!invResponse.ok && invResponse.status !== 204) {
-        const errText = await invResponse.text();
-        throw new Error(`Inventory Item creation failed [${invResponse.status}]: ${errText}`);
-      }
-      // Consume body if 204
-      if (invResponse.status !== 204) await invResponse.text();
-
-      // Step 2: Create or update offer
-      if (!offer.offer_id) {
-        // Create new offer
-        const offerPayload: any = {
-          sku: offer.sku,
-          marketplaceId: marketplace,
-          format: "FIXED_PRICE",
-          pricingSummary: {
-            price: { value: String(offer.price || 0), currency: "EUR" },
-          },
-          availableQuantity: offer.quantity || 1,
-          categoryId: offer.category_id || "175673", // Default eBay category
-          listingDescription: product?.description || product?.title || "",
-          merchantLocationKey: undefined,
-        };
-
-        if (offer.fulfillment_policy_id) offerPayload.listingPolicies = { ...offerPayload.listingPolicies, fulfillmentPolicyId: offer.fulfillment_policy_id };
-        if (offer.payment_policy_id) offerPayload.listingPolicies = { ...offerPayload.listingPolicies, paymentPolicyId: offer.payment_policy_id };
-        if (offer.return_policy_id) offerPayload.listingPolicies = { ...offerPayload.listingPolicies, returnPolicyId: offer.return_policy_id };
-
-        const createResponse = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer`, {
-          method: "POST",
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-            'Content-Language': 'de-DE',
-          },
-          body: JSON.stringify(offerPayload),
+      if (offer.listing_id) {
+        // ReviseFixedPriceItem – update existing listing
+        const xml = await ebayTradingCall({
+          callName: "ReviseFixedPriceItem",
+          body: `
+            <Item>
+              <ItemID>${offer.listing_id}</ItemID>
+              <StartPrice>${offer.price || 0}</StartPrice>
+              <Quantity>${offer.quantity || 1}</Quantity>
+            </Item>
+          `,
         });
 
-        const createData = await createResponse.json();
-        if (!createResponse.ok) {
-          throw new Error(`Offer creation failed [${createResponse.status}]: ${JSON.stringify(createData)}`);
-        }
-
-        const ebayOfferId = createData.offerId;
-
-        // Step 3: Publish the offer
-        const publishResponse = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${ebayOfferId}/publish`, {
-          method: "POST",
-          headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        });
-
-        const publishData = await publishResponse.json();
-        if (!publishResponse.ok) {
-          throw new Error(`Publish failed [${publishResponse.status}]: ${JSON.stringify(publishData)}`);
-        }
-
-        // Update DB with offer_id and listing_id
         await supabase.from('ebay_offers').update({
-          offer_id: ebayOfferId,
-          listing_id: publishData.listingId || null,
           state: 'published',
           last_synced_at: new Date().toISOString(),
         }).eq('id', offerId);
 
         return new Response(
-          JSON.stringify({ success: true, message: `Listing veröffentlicht (${publishData.listingId})`, listingId: publishData.listingId, offerId: ebayOfferId }),
+          JSON.stringify({ success: true, message: `Listing ${offer.listing_id} aktualisiert` }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       } else {
-        // Update existing offer price/quantity
-        const updatePayload = {
-          pricingSummary: {
-            price: { value: String(offer.price || 0), currency: "EUR" },
-          },
-          availableQuantity: offer.quantity || 1,
-        };
+        // AddFixedPriceItem – create new listing
+        const title = (product?.title || offer.sku).substring(0, 80);
+        const description = product?.description || title;
+        const images = (product?.images_json as string[]) || [];
+        const pictureUrls = images.map(url => `<PictureURL>${url}</PictureURL>`).join("\n");
 
-        const updateResponse = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offer_id}`, {
-          method: "PUT",
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-            'Content-Language': 'de-DE',
-          },
-          body: JSON.stringify(updatePayload),
+        const xml = await ebayTradingCall({
+          callName: "AddFixedPriceItem",
+          body: `
+            <Item>
+              <Title>${escapeXml(title)}</Title>
+              <Description>${escapeXml(description)}</Description>
+              <PrimaryCategory>
+                <CategoryID>${offer.category_id || "175673"}</CategoryID>
+              </PrimaryCategory>
+              <StartPrice currencyID="EUR">${offer.price || 0}</StartPrice>
+              <Quantity>${offer.quantity || 1}</Quantity>
+              <ListingDuration>GTC</ListingDuration>
+              <ListingType>FixedPriceItem</ListingType>
+              <Country>DE</Country>
+              <Currency>EUR</Currency>
+              <ConditionID>1000</ConditionID>
+              <SKU>${escapeXml(offer.sku)}</SKU>
+              <PictureDetails>
+                ${pictureUrls}
+              </PictureDetails>
+              <DispatchTimeMax>3</DispatchTimeMax>
+            </Item>
+          `,
         });
 
-        if (!updateResponse.ok) {
-          const errText = await updateResponse.text();
-          throw new Error(`Offer update failed [${updateResponse.status}]: ${errText}`);
-        }
-        await updateResponse.text();
+        const itemId = xmlValue(xml, "ItemID");
 
         await supabase.from('ebay_offers').update({
+          listing_id: itemId,
           state: 'published',
           last_synced_at: new Date().toISOString(),
         }).eq('id', offerId);
 
         return new Response(
-          JSON.stringify({ success: true, message: 'Offer aktualisiert' }),
+          JSON.stringify({ success: true, message: `Listing erstellt (${itemId})`, listingId: itemId }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
     } else if (action === "withdraw") {
-      if (!offer.offer_id) {
-        return new Response(JSON.stringify({ success: false, error: 'Kein Offer zum Zurückziehen' }), {
+      if (!offer.listing_id) {
+        return new Response(JSON.stringify({ success: false, error: 'Kein Listing zum Beenden' }), {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      const response = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offer.offer_id}/withdraw`, {
-        method: "POST",
-        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      await ebayTradingCall({
+        callName: "EndFixedPriceItem",
+        body: `
+          <ItemID>${offer.listing_id}</ItemID>
+          <EndingReason>NotAvailable</EndingReason>
+        `,
       });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Withdraw failed [${response.status}]: ${errText}`);
-      }
-      await response.text();
 
       await supabase.from('ebay_offers').update({
         state: 'paused',
@@ -201,7 +133,7 @@ Deno.serve(async (req) => {
       }).eq('id', offerId);
 
       return new Response(
-        JSON.stringify({ success: true, message: 'Listing zurückgezogen' }),
+        JSON.stringify({ success: true, message: 'Listing beendet' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -218,3 +150,12 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}

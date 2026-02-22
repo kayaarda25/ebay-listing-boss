@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getEbayAccessToken, EBAY_API_BASE } from "../_shared/ebay-auth.ts";
+import { ebayTradingCall } from "../_shared/ebay-auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -119,14 +119,6 @@ Deno.serve(async (req) => {
     }
 
     // 3. Re-scrape Amazon prices using Firecrawl
-    // 3. Get eBay access token for pushing prices
-    let accessToken: string | null = null;
-    try {
-      accessToken = await getEbayAccessToken();
-    } catch (e) {
-      console.warn("Could not get eBay access token, skipping eBay price push:", e);
-    }
-
     const apiKey = Deno.env.get('FIRECRAWL_API_KEY');
     let priceUpdates = 0;
     let priceChanges = 0;
@@ -203,37 +195,30 @@ Deno.serve(async (req) => {
               .update(updateData)
               .eq('id', product.id);
 
-            // Also update offer price in DB
+            // Also update offer price in DB and push to eBay
             const { data: offerData } = await supabase
               .from('ebay_offers')
               .update({ price: newEbayPrice })
               .eq('seller_id', sellerId)
               .eq('sku', product.source_id)
-              .select('offer_id')
+              .select('listing_id')
               .maybeSingle();
 
-            // Push to eBay if offer exists and we have a token
-            if (accessToken && offerData?.offer_id) {
+            // Push to eBay via Trading API if listing exists
+            if (offerData?.listing_id) {
               try {
-                const resp = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offerData.offer_id}`, {
-                  method: "PUT",
-                  headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json',
-                    'Content-Language': 'de-DE',
-                  },
-                  body: JSON.stringify({
-                    pricingSummary: { price: { value: String(newEbayPrice), currency: "EUR" } },
-                  }),
+                await ebayTradingCall({
+                  callName: "ReviseFixedPriceItem",
+                  body: `
+                    <Item>
+                      <ItemID>${offerData.listing_id}</ItemID>
+                      <StartPrice currencyID="EUR">${newEbayPrice}</StartPrice>
+                    </Item>
+                  `,
                 });
-                if (resp.ok) {
-                  ebayPushed++;
-                } else {
-                  console.warn(`eBay price push failed for ${product.source_id}: ${resp.status}`);
-                }
-                await resp.text();
+                ebayPushed++;
               } catch (e) {
-                console.warn(`eBay push error for ${product.source_id}:`, e);
+                console.warn(`eBay price push error for ${product.source_id}:`, e);
               }
             }
 
@@ -276,25 +261,21 @@ Deno.serve(async (req) => {
           .update({ price: newEbayPrice })
           .eq('seller_id', sellerId)
           .eq('sku', product.source_id)
-          .select('offer_id')
+          .select('listing_id')
           .maybeSingle();
 
-        // Push to eBay if we have a token and offer_id
-        if (accessToken && offerData?.offer_id) {
+        if (offerData?.listing_id) {
           try {
-            const resp = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer/${offerData.offer_id}`, {
-              method: "PUT",
-              headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Content-Type': 'application/json',
-                'Content-Language': 'de-DE',
-              },
-              body: JSON.stringify({
-                pricingSummary: { price: { value: String(newEbayPrice), currency: "EUR" } },
-              }),
+            await ebayTradingCall({
+              callName: "ReviseFixedPriceItem",
+              body: `
+                <Item>
+                  <ItemID>${offerData.listing_id}</ItemID>
+                  <StartPrice currencyID="EUR">${newEbayPrice}</StartPrice>
+                </Item>
+              `,
             });
-            if (resp.ok) ebayPushed++;
-            await resp.text();
+            ebayPushed++;
           } catch (e) {
             console.warn(`eBay push error for ${product.source_id}:`, e);
           }
