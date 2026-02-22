@@ -33,18 +33,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    const res = await fetch(`${CJ_BASE}/product/list`, {
-      method: "GET",
-      headers: { "CJ-Access-Token": token },
-    });
-
-    // CJ product list uses GET with query params
     const searchUrl = `${CJ_BASE}/product/list?productNameEn=${encodeURIComponent(query)}&pageNum=${pageNum}&pageSize=${pageSize}`;
     const searchRes = await fetch(searchUrl, {
       headers: { "CJ-Access-Token": token },
     });
     const searchData = await searchRes.json();
-    await res.text(); // consume first response body
 
     if (searchData.code !== 200) throw new Error(searchData.message || "CJ search failed");
 
