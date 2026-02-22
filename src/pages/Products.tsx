@@ -1,10 +1,11 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { ImportDialog } from "@/components/ImportDialog";
 import { ProductDetailDialog } from "@/components/ProductDetailDialog";
+import { ProductFilters, applyProductFilters, EMPTY_FILTERS, type ProductFilterValues } from "@/components/ProductFilters";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, ExternalLink, Package, Star, ImageOff, Trash2, Loader2 } from "lucide-react";
+import { Search, Plus, ExternalLink, Package, Star, ImageOff, Trash2, Loader2, MapPin, Clock, Truck, Weight } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
@@ -35,6 +36,7 @@ const ProductsPage = () => {
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
+  const [filters, setFilters] = useState<ProductFilterValues>(EMPTY_FILTERS);
 
   async function handleDelete(product: any) {
     if (!sellerId) return;
@@ -62,10 +64,11 @@ const ProductsPage = () => {
     enabled: !!sellerId,
   });
 
-  const filtered = products.filter((p) => {
+  const searchFiltered = products.filter((p) => {
     const term = search.toLowerCase();
     return p.title.toLowerCase().includes(term) || p.source_id.toLowerCase().includes(term);
   });
+  const filtered = applyProductFilters(searchFiltered, filters);
 
   function getImages(p: any): string[] {
     if (Array.isArray(p.images_json)) return p.images_json;
@@ -111,6 +114,8 @@ const ProductsPage = () => {
           </div>
         </div>
 
+        <ProductFilters filters={filters} onFiltersChange={setFilters} products={searchFiltered} />
+
         {isLoading ? (
           <div className="py-16 text-center text-[14px] text-muted-foreground">Laden...</div>
         ) : filtered.length === 0 ? (
@@ -128,6 +133,12 @@ const ProductsPage = () => {
               const rating = getAttr(p, "rating");
               const reviewCount = getAttr(p, "review_count");
               const availability = getAttr(p, "availability");
+              const warehouse = getAttr(p, "warehouse");
+              const shippingTime = getAttr(p, "shipping_time");
+              const shippingCost = getAttr(p, "shipping_cost");
+              const weight = getAttr(p, "weight") || getAttr(p, "packing_weight");
+              const category = getAttr(p, "category");
+              const material = getAttr(p, "material");
 
               return (
                 <div
@@ -213,6 +224,40 @@ const ProductsPage = () => {
                         {p.description}
                       </p>
                     )}
+
+                    {/* Extra details row */}
+                    <div className="flex items-center gap-3 flex-wrap pt-0.5">
+                      {warehouse && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <MapPin className="w-3 h-3" /> {warehouse}
+                        </span>
+                      )}
+                      {shippingTime && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <Clock className="w-3 h-3" /> {shippingTime}{typeof shippingTime === "number" ? " Tage" : ""}
+                        </span>
+                      )}
+                      {shippingCost != null && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <Truck className="w-3 h-3" /> Versand €{Number(shippingCost).toFixed(2)}
+                        </span>
+                      )}
+                      {weight && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <Weight className="w-3 h-3" /> {weight}
+                        </span>
+                      )}
+                      {category && (
+                        <span className="text-xs text-muted-foreground/70">
+                          {category}
+                        </span>
+                      )}
+                      {material && (
+                        <span className="text-xs text-muted-foreground/70">
+                          {material}
+                        </span>
+                      )}
+                    </div>
 
                     <div className="flex items-center gap-3 pt-1">
                       {availability && (
