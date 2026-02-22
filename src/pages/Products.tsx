@@ -5,7 +5,7 @@ import { ProductFilters, applyProductFilters, EMPTY_FILTERS, type ProductFilterV
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, ExternalLink, Package, Star, ImageOff, Trash2, Loader2, MapPin, Clock, Truck, Weight } from "lucide-react";
+import { Search, Plus, ExternalLink, Package, Star, ImageOff, Trash2, Loader2, MapPin, Clock, Truck, Weight, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
@@ -37,6 +37,25 @@ const ProductsPage = () => {
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
   const [filters, setFilters] = useState<ProductFilterValues>(EMPTY_FILTERS);
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function handleRefreshCJ() {
+    if (!sellerId) return;
+    setRefreshing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("cj-refresh-products", {
+        body: { sellerId },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Aktualisierung fehlgeschlagen");
+      toast.success(`${data.updated}/${data.total} CJ-Produkte aktualisiert`);
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+    } catch (err: any) {
+      toast.error(err.message || "Aktualisierung fehlgeschlagen");
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function handleDelete(product: any) {
     if (!sellerId) return;
@@ -92,13 +111,24 @@ const ProductsPage = () => {
               {products.length} importierte Quellprodukte
             </p>
           </div>
-          <button
-            onClick={() => setImportOpen(true)}
-            className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground text-[14px] font-semibold rounded-xl hover:bg-primary/90 transition-all duration-200 shadow-apple-sm"
-          >
-            <Plus className="w-4 h-4" />
-            Import
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefreshCJ}
+              disabled={refreshing}
+              className="flex items-center gap-2 px-4 py-2.5 bg-card border border-border/60 text-foreground text-[14px] font-medium rounded-xl hover:bg-muted transition-all duration-200"
+              title="CJ-Produktdaten aktualisieren"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Aktualisiere..." : "CJ aktualisieren"}
+            </button>
+            <button
+              onClick={() => setImportOpen(true)}
+              className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground text-[14px] font-semibold rounded-xl hover:bg-primary/90 transition-all duration-200 shadow-apple-sm"
+            >
+              <Plus className="w-4 h-4" />
+              Import
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
