@@ -43,11 +43,21 @@ export async function ebayTradingCall({ callName, body, siteId = "77" }: EbayTra
     throw new Error(`eBay Trading API [${response.status}]: ${text.substring(0, 500)}`);
   }
 
-  // Check for eBay error in response — only fail on Failure, not Warning
+  // Check for eBay error in response
   if (text.includes("<Ack>Failure</Ack>")) {
     const errorMatch = text.match(/<ShortMessage>(.*?)<\/ShortMessage>/);
     const longMatch = text.match(/<LongMessage>(.*?)<\/LongMessage>/);
-    throw new Error(`eBay Error: ${errorMatch?.[1] || longMatch?.[1] || "Unknown error"}`);
+    const severityMatch = text.match(/<SeverityCode>(.*?)<\/SeverityCode>/g);
+    const errorMsg = longMatch?.[1] || errorMatch?.[1] || "Unknown error";
+
+    // If the response still contains an ItemID, the listing was created despite the "Failure"
+    // eBay sometimes reports Failure for account-level warnings (e.g. payment holds)
+    const hasItemId = /<ItemID>\d+<\/ItemID>/.test(text);
+    if (hasItemId) {
+      console.warn(`eBay reported Failure but ItemID found – treating as warning: ${errorMsg}`);
+    } else {
+      throw new Error(`eBay Error: ${errorMsg}`);
+    }
   }
 
   // Log warnings but don't throw
