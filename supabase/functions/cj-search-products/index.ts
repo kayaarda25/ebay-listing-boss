@@ -69,9 +69,22 @@ Deno.serve(async (req) => {
 
     if (searchData.code !== 200) throw new Error(searchData.message || "CJ search failed");
 
+    const rawProducts = searchData.data?.list || [];
+
+    // Filter out removed/invalid products
+    const validProducts = rawProducts.filter((p: any) => {
+      // Skip products with no price
+      if (!p.sellPrice && !p.productPrice) return false;
+      // Skip products explicitly marked as removed/invalid
+      if (p.productStatus && p.productStatus !== "VALID" && p.productStatus !== "ON_SALE") return false;
+      // Skip products with no image
+      if (!p.productImage && (!p.productImageSet || p.productImageSet.length === 0)) return false;
+      return true;
+    });
+
     return new Response(JSON.stringify({
       success: true,
-      products: searchData.data?.list || [],
+      products: validProducts,
       total: searchData.data?.total || 0,
       pageNum,
       pageSize,
