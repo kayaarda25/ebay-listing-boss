@@ -75,6 +75,7 @@ Deno.serve(async (req) => {
 
         if (existing) {
           await supabase.from('ebay_offers').update({
+            title,
             price: currentPrice,
             quantity: remainingQty,
             state,
@@ -87,6 +88,7 @@ Deno.serve(async (req) => {
           await supabase.from('ebay_offers').insert({
             seller_id: sellerId,
             sku,
+            title,
             price: currentPrice,
             quantity: remainingQty,
             state,

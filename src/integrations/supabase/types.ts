@@ -80,7 +80,9 @@ export type Database = {
           return_policy_id: string | null
           seller_id: string
           sku: string
+          source_url: string | null
           state: string
+          title: string | null
           updated_at: string
         }
         Insert: {
@@ -97,7 +99,9 @@ export type Database = {
           return_policy_id?: string | null
           seller_id: string
           sku: string
+          source_url?: string | null
           state?: string
+          title?: string | null
           updated_at?: string
         }
         Update: {
@@ -114,7 +118,9 @@ export type Database = {
           return_policy_id?: string | null
           seller_id?: string
           sku?: string
+          source_url?: string | null
           state?: string
+          title?: string | null
           updated_at?: string
         }
         Relationships: [
