@@ -43,11 +43,17 @@ export async function ebayTradingCall({ callName, body, siteId = "77" }: EbayTra
     throw new Error(`eBay Trading API [${response.status}]: ${text.substring(0, 500)}`);
   }
 
-  // Check for eBay error in response
+  // Check for eBay error in response — only fail on Failure, not Warning
   if (text.includes("<Ack>Failure</Ack>")) {
     const errorMatch = text.match(/<ShortMessage>(.*?)<\/ShortMessage>/);
     const longMatch = text.match(/<LongMessage>(.*?)<\/LongMessage>/);
     throw new Error(`eBay Error: ${errorMatch?.[1] || longMatch?.[1] || "Unknown error"}`);
+  }
+
+  // Log warnings but don't throw
+  if (text.includes("<Ack>Warning</Ack>")) {
+    const warnMatch = text.match(/<LongMessage>(.*?)<\/LongMessage>/);
+    console.warn(`eBay Warning: ${warnMatch?.[1] || "Unknown warning"}`);
   }
 
   return text;
