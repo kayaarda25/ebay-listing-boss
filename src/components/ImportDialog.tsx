@@ -105,14 +105,24 @@ export function ImportDialog({ open, onOpenChange, onSuccess }: ImportDialogProp
         return;
       }
 
-      // Fetch full product detail from CJ API for warehouse/shipping info
+      // Fetch full product detail from CJ API - also validates product still exists
       let detail: any = null;
       try {
         const { data: detailData } = await supabase.functions.invoke("cj-search-products", {
           body: { productId: pid },
         });
-        if (detailData?.success) detail = detailData.product;
-      } catch (e) { console.warn("CJ detail fetch failed:", e); }
+        if (detailData?.success) {
+          detail = detailData.product;
+        } else {
+          toast.error("Dieses Produkt ist auf CJ nicht mehr verfügbar (entfernt).");
+          setCjImporting(null);
+          return;
+        }
+      } catch (e) {
+        toast.error("Produktdetails konnten nicht geladen werden. Möglicherweise ist das Produkt entfernt.");
+        setCjImporting(null);
+        return;
+      }
 
       // Fetch freight/shipping info to Germany
       let freightInfo: any = null;
