@@ -96,9 +96,10 @@ const OrdersPage = () => {
 
   const filtered = orders.filter((o) => {
     const buyerEmail = (o.buyer_json as Record<string, Json> | null)?.email as string || "";
-    const matchSearch =
-      o.order_id.toLowerCase().includes(search.toLowerCase()) ||
-      buyerEmail.toLowerCase().includes(search.toLowerCase());
+    const buyerName = (o.buyer_json as Record<string, Json> | null)?.name as string || "";
+    const buyerUsername = (o.buyer_json as Record<string, Json> | null)?.username as string || "";
+    const searchText = `${o.order_id} ${buyerName} ${buyerUsername} ${buyerEmail}`.toLowerCase();
+    const matchSearch = searchText.includes(search.toLowerCase());
     const matchStatus = statusFilter === "all" || o.order_status === statusFilter;
     return matchSearch && matchStatus;
   });
@@ -174,12 +175,19 @@ const OrdersPage = () => {
                 </thead>
                 <tbody>
                   {filtered.map((order) => {
-                    const buyerEmail = (order.buyer_json as Record<string, Json> | null)?.email as string || "—";
+                    const buyer = order.buyer_json as Record<string, Json> | null;
+                    const buyerName = (buyer?.name as string) || (buyer?.username as string) || (buyer?.email as string) || "—";
+                    const buyerUsername = buyer?.username as string || "";
                     const shipment = (order as any).shipments?.[0];
                     return (
                       <tr key={order.id}>
                         <td className="font-mono text-xs">{order.order_id}</td>
-                        <td className="text-[14px]">{buyerEmail}</td>
+                        <td className="text-[14px]">
+                          <div>{buyerName}</div>
+                          {buyerUsername && buyerUsername !== buyerName && (
+                            <div className="text-xs text-muted-foreground">{buyerUsername}</div>
+                          )}
+                        </td>
                         <td>
                           <span className={`status-badge ${order.order_status === 'delivered' ? 'status-active' : order.order_status === 'shipped' ? 'status-pending' : order.order_status === 'cancelled' ? 'status-error' : 'status-paused'}`}>
                             {order.order_status}
