@@ -14,6 +14,27 @@ export type Database = {
   }
   public: {
     Tables: {
+      api_token_cache: {
+        Row: {
+          access_token: string
+          expires_at: string
+          id: string
+          updated_at: string | null
+        }
+        Insert: {
+          access_token: string
+          expires_at: string
+          id: string
+          updated_at?: string | null
+        }
+        Update: {
+          access_token?: string
+          expires_at?: string
+          id?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       ebay_inventory_items: {
         Row: {
           created_at: string
