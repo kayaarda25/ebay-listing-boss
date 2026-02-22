@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { fetchOrders } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Send, CheckCircle, Loader2, Plus, Truck, RefreshCw, ChevronDown, ChevronUp, MapPin, Package } from "lucide-react";
+import { Search, Send, CheckCircle, Loader2, Plus, Truck, RefreshCw, ChevronDown, ChevronUp, MapPin, Package, ShoppingCart } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
@@ -28,6 +28,8 @@ const OrdersPage = () => {
   const [addingTracking, setAddingTracking] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [cjOrderingId, setCjOrderingId] = useState<string | null>(null);
+  const [cjTrackingSyncId, setCjTrackingSyncId] = useState<string | null>(null);
 
   async function handleSyncOrders() {
     if (!sellerId) return;
@@ -89,6 +91,41 @@ const OrdersPage = () => {
     }
   }
 
+  async function handleCJOrder(orderId: string) {
+    if (!sellerId) return;
+    setCjOrderingId(orderId);
+    try {
+      const { data, error } = await supabase.functions.invoke("cj-create-order", {
+        body: { orderId, sellerId },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "CJ Order fehlgeschlagen");
+      toast.success(data.message);
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    } catch (err: any) {
+      toast.error(err.message || "CJ Order fehlgeschlagen");
+    } finally {
+      setCjOrderingId(null);
+    }
+  }
+
+  async function handleCJTrackingSync(orderId: string) {
+    if (!sellerId) return;
+    setCjTrackingSyncId(orderId);
+    try {
+      const { data, error } = await supabase.functions.invoke("cj-sync-tracking", {
+        body: { orderId, sellerId },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Tracking-Sync fehlgeschlagen");
+      toast.success(data.message);
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    } catch (err: any) {
+      toast.error(err.message || "CJ Tracking-Sync fehlgeschlagen");
+    } finally {
+      setCjTrackingSyncId(null);
+    }
+  }
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ["orders", sellerId],
     queryFn: () => fetchOrders(sellerId!),
@@ -257,27 +294,52 @@ const OrdersPage = () => {
                             {new Date(order.created_at).toLocaleString("de-DE")}
                           </td>
                           <td onClick={(e) => e.stopPropagation()}>
-                            {shipment && !shipment.tracking_pushed ? (
-                              <button
-                                onClick={() => handlePushTracking(shipment)}
-                                disabled={pushingId === shipment.id}
-                                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 transition-all duration-200 shadow-apple-sm disabled:opacity-50"
-                              >
-                                {pushingId === shipment.id ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <Send className="w-3 h-3" />
-                                )}
-                                Push
-                              </button>
-                            ) : !shipment && order.order_status === "pending" ? (
-                              <button
-                                onClick={() => setTrackingDialog(order)}
-                                className="flex items-center gap-1.5 px-3.5 py-1.5 border border-border text-foreground text-xs font-semibold rounded-lg hover:bg-muted transition-all duration-200"
-                              >
-                                <Plus className="w-3 h-3" /> Tracking
-                              </button>
-                            ) : null}
+                            <div className="flex items-center gap-1.5">
+                              {/* CJ Order button - show when pending and no CJ order yet */}
+                              {order.order_status === "pending" && !(buyer as any)?.cj_order_id && (
+                                <button
+                                  onClick={() => handleCJOrder(order.id)}
+                                  disabled={cjOrderingId === order.id}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 bg-accent text-accent-foreground text-xs font-semibold rounded-lg hover:bg-accent/80 transition-all duration-200 disabled:opacity-50"
+                                  title="Bei CJDropshipping bestellen"
+                                >
+                                  {cjOrderingId === order.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShoppingCart className="w-3 h-3" />}
+                                  CJ
+                                </button>
+                              )}
+                              {/* CJ Tracking sync - show when CJ order exists but no shipment */}
+                              {(buyer as any)?.cj_order_id && !shipment && (
+                                <button
+                                  onClick={() => handleCJTrackingSync(order.id)}
+                                  disabled={cjTrackingSyncId === order.id}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 border border-border text-foreground text-xs font-semibold rounded-lg hover:bg-muted transition-all duration-200 disabled:opacity-50"
+                                  title="Tracking von CJ abrufen"
+                                >
+                                  {cjTrackingSyncId === order.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Truck className="w-3 h-3" />}
+                                  Tracking
+                                </button>
+                              )}
+                              {/* Push tracking to eBay */}
+                              {shipment && !shipment.tracking_pushed && (
+                                <button
+                                  onClick={() => handlePushTracking(shipment)}
+                                  disabled={pushingId === shipment.id}
+                                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 transition-all duration-200 shadow-apple-sm disabled:opacity-50"
+                                >
+                                  {pushingId === shipment.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                                  Push
+                                </button>
+                              )}
+                              {/* Manual tracking */}
+                              {!shipment && order.order_status === "pending" && !(buyer as any)?.cj_order_id && (
+                                <button
+                                  onClick={() => setTrackingDialog(order)}
+                                  className="flex items-center gap-1.5 px-2.5 py-1.5 border border-border text-foreground text-xs font-semibold rounded-lg hover:bg-muted transition-all duration-200"
+                                >
+                                  <Plus className="w-3 h-3" /> Tracking
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                         {isExpanded && (

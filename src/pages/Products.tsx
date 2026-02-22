@@ -117,7 +117,7 @@ const ProductsPage = () => {
           <div className="glass-card py-16 text-center text-[14px] text-muted-foreground flex flex-col items-center gap-3">
             <Package className="w-12 h-12 text-muted-foreground/30" />
             {products.length === 0
-              ? "Noch keine Produkte. Importiere Amazon-URLs, um loszulegen."
+              ? "Noch keine Produkte. Importiere Amazon- oder CJ-Produkte, um loszulegen."
               : "Keine Produkte gefunden."}
           </div>
         ) : (
@@ -226,15 +226,27 @@ const ProductsPage = () => {
                       <span className="text-xs text-muted-foreground">
                         Bestand: {p.stock_source ?? "—"}
                       </span>
-                      <a
-                        href={`https://www.amazon.de/dp/${p.source_id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-primary hover:text-primary/80 inline-flex items-center gap-1 ml-auto font-medium transition-colors"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Amazon <ExternalLink className="w-3 h-3" />
-                      </a>
+                      {p.source_type === "cjdropshipping" ? (
+                        <a
+                          href={`https://cjdropshipping.com/product/p-${p.source_id}.html`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-primary hover:text-primary/80 inline-flex items-center gap-1 ml-auto font-medium transition-colors"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          CJ <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : (
+                        <a
+                          href={`https://www.amazon.de/dp/${p.source_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-primary hover:text-primary/80 inline-flex items-center gap-1 ml-auto font-medium transition-colors"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Amazon <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
                       <span className="text-xs text-muted-foreground">
                         {new Date(p.created_at).toLocaleDateString("de-DE")}
                       </span>

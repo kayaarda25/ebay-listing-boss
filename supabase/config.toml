@@ -26,3 +26,12 @@ verify_jwt = false
 
 [functions.cron-sync-prices]
 verify_jwt = false
+
+[functions.cj-search-products]
+verify_jwt = false
+
+[functions.cj-create-order]
+verify_jwt = false
+
+[functions.cj-sync-tracking]
+verify_jwt = false
