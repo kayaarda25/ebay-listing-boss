@@ -35,3 +35,9 @@ verify_jwt = false
 
 [functions.cj-sync-tracking]
 verify_jwt = false
+
+[functions.api]
+verify_jwt = false
+
+[functions.job-worker]
+verify_jwt = false
