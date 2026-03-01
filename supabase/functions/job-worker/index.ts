@@ -36,6 +36,55 @@ Deno.serve(async (req) => {
     });
   }
 
+  // ===== AUTOPILOT CONTINUOUS MODE =====
+  // Check all sellers with autopilot_active and queue their workflows
+  try {
+    const { data: activeSellers } = await supabase
+      .from("sellers")
+      .select("id, pricing_settings")
+      .eq("is_active", true);
+
+    for (const seller of activeSellers || []) {
+      const settings = seller.pricing_settings as any;
+      if (!settings?.autopilot_active) continue;
+
+      const lastRun = settings.autopilot_last_run ? new Date(settings.autopilot_last_run).getTime() : 0;
+      const intervalMs = (settings.autopilot_interval_min || 5) * 60 * 1000;
+      
+      if (Date.now() - lastRun < intervalMs) continue;
+
+      // Queue autopilot workflows as jobs
+      const workflows = settings.autopilot_workflows || ["order_sync", "fulfillment", "tracking", "listings", "discovery", "optimize"];
+      
+      for (const wf of workflows) {
+        // Check if same type job is already queued/running for this seller
+        const { data: existingJob } = await supabase
+          .from("jobs")
+          .select("id")
+          .eq("seller_id", seller.id)
+          .eq("type", `autopilot_${wf}`)
+          .in("state", ["queued", "running"])
+          .maybeSingle();
+
+        if (!existingJob) {
+          await supabase.from("jobs").insert({
+            seller_id: seller.id,
+            type: `autopilot_${wf}`,
+            input: { workflow: wf, auto: true },
+            state: "queued",
+          });
+        }
+      }
+
+      // Update last run timestamp
+      await supabase.from("sellers").update({
+        pricing_settings: { ...settings, autopilot_last_run: new Date().toISOString() },
+      }).eq("id", seller.id);
+    }
+  } catch (err) {
+    console.error("Autopilot scheduler error:", err);
+  }
+
   if (!jobs || jobs.length === 0) {
     return new Response(JSON.stringify({ ok: true, processed: 0 }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -53,16 +102,26 @@ Deno.serve(async (req) => {
 
       switch (job.type) {
         case "orders_sync":
+        case "autopilot_order_sync":
           output = await processOrdersSync(supabase, job);
           break;
         case "order_fulfill":
+        case "autopilot_fulfillment":
           output = await processOrderFulfill(supabase, job);
           break;
         case "tracking_sync":
+        case "autopilot_tracking":
           output = await processTrackingSync(supabase, job);
           break;
         case "listing_publish":
+        case "autopilot_listings":
           output = await processListingPublish(supabase, job);
+          break;
+        case "autopilot_discovery":
+          output = await processAutopilotDiscovery(supabase, job);
+          break;
+        case "autopilot_optimize":
+          output = await processAutopilotOptimize(supabase, job);
           break;
         default:
           throw new Error(`Unknown job type: ${job.type}`);
@@ -362,4 +421,55 @@ async function processListingPublish(supabase: any, job: any): Promise<any> {
   }
 
   return { listingId: itemId, message: "Published to eBay" };
+}
+
+async function processAutopilotDiscovery(supabase: any, job: any): Promise<any> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  
+  const res = await fetch(`${supabaseUrl}/functions/v1/product-discovery`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${serviceKey}`,
+    },
+    body: JSON.stringify({
+      sellerId: job.seller_id,
+      maxProducts: 20,
+    }),
+  });
+  const data = await res.json();
+  return { discovered: data.discovered || 0, imported: data.imported || 0 };
+}
+
+async function processAutopilotOptimize(supabase: any, job: any): Promise<any> {
+  // Deactivate stale listings (>14 days, no sales)
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString();
+  
+  const { data: staleListings } = await supabase
+    .from("ebay_offers")
+    .select("id, sku")
+    .eq("seller_id", job.seller_id)
+    .in("state", ["published", "active"])
+    .lte("created_at", fourteenDaysAgo)
+    .limit(50);
+
+  if (!staleListings || staleListings.length === 0) return { deactivated: 0 };
+
+  const staleSKUs = staleListings.map((l: any) => l.sku);
+  const { data: orderItems } = await supabase
+    .from("order_items")
+    .select("sku")
+    .eq("seller_id", job.seller_id)
+    .in("sku", staleSKUs);
+
+  const skusWithSales = new Set((orderItems || []).map((oi: any) => oi.sku));
+  let deactivated = 0;
+  for (const listing of staleListings) {
+    if (!skusWithSales.has(listing.sku)) {
+      await supabase.from("ebay_offers").update({ state: "paused" }).eq("id", listing.id);
+      deactivated++;
+    }
+  }
+  return { checked: staleListings.length, deactivated };
 }
