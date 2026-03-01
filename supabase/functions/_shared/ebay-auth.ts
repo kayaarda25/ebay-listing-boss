@@ -45,17 +45,27 @@ export async function ebayTradingCall({ callName, body, siteId = "77" }: EbayTra
 
   // Check for eBay error in response
   if (text.includes("<Ack>Failure</Ack>")) {
-    const longMatch = text.match(/<LongMessage>([\s\S]*?)<\/LongMessage>/);
-    const errorMatch = text.match(/<ShortMessage>([\s\S]*?)<\/ShortMessage>/);
-    const errorMsg = longMatch?.[1] || errorMatch?.[1] || "Unknown error";
+    // Extract ALL error messages, not just the first one
+    const allLongMessages = xmlValues(text, "LongMessage");
+    const allShortMessages = xmlValues(text, "ShortMessage");
+    const allErrorCodes = xmlValues(text, "ErrorCode");
+    
+    console.error(`eBay Failure – all errors: ${JSON.stringify({ codes: allErrorCodes, long: allLongMessages, short: allShortMessages })}`);
+    console.error(`eBay full response (first 2000 chars): ${text.substring(0, 2000)}`);
+
+    const errorMsg = allLongMessages[0] || allShortMessages[0] || "Unknown error";
 
     // If the response still contains an ItemID, the listing was created despite the "Failure"
-    // eBay sometimes reports Failure for account-level warnings (e.g. payment holds)
     const hasItemId = /<ItemID>[^<]+<\/ItemID>/.test(text);
-    const isPaymentHoldWarning = isPaymentHoldMessage(errorMsg);
-    if (hasItemId || isPaymentHoldWarning) {
-      console.warn(`eBay reported Failure but treating as warning (itemId=${hasItemId}, paymentHold=${isPaymentHoldWarning}): ${errorMsg}`);
+    if (hasItemId) {
+      console.warn(`eBay reported Failure but ItemID found – treating as warning: ${errorMsg}`);
     } else {
+      // Collect all non-payment-hold errors
+      const realErrors = allLongMessages.filter(m => !isPaymentHoldMessage(m));
+      if (realErrors.length > 0) {
+        throw new Error(`eBay Error: ${realErrors.join(' | ')}`);
+      }
+      // Only payment hold warnings – still a failure since no ItemID
       throw new Error(`eBay Error: ${errorMsg}`);
     }
   }
