@@ -197,10 +197,10 @@ function buildItemSpecifics(attributes: Record<string, string>): string {
   const specs: Record<string, string> = { Marke: "Markenlos", ...attributes };
 
   const nameValues = Object.entries(specs)
-    .filter(([_, v]) => v && v.trim())
+    .filter(([_, v]) => v != null && typeof v !== 'object' && String(v).trim())
     .map(([name, value]) => `
       <NameValueList>
-        <Name>${escapeXml(name)}</Name>
+        <Name>${escapeXml(String(name))}</Name>
         <Value>${escapeXml(String(value).substring(0, 65))}</Value>
       </NameValueList>`)
     .join("");
