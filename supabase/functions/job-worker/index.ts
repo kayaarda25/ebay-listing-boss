@@ -164,6 +164,7 @@ async function processOrdersSync(supabase: any, job: any): Promise<any> {
 
   const xml = await ebayTradingCall({
     callName: "GetOrders",
+    sellerId: job.seller_id,
     body: `
       <CreateTimeFrom>${thirtyDaysAgo.toISOString()}</CreateTimeFrom>
       <CreateTimeTo>${now.toISOString()}</CreateTimeTo>
@@ -397,6 +398,7 @@ async function processTrackingSync(supabase: any, job: any): Promise<any> {
   // Push to eBay
   await ebayTradingCall({
     callName: "CompleteSale",
+    sellerId: job.seller_id,
     body: `
       <OrderID>${order.order_id}</OrderID>
       <Shipment>
@@ -419,68 +421,45 @@ async function processTrackingSync(supabase: any, job: any): Promise<any> {
   return { updated: true, trackingNumber, carrier };
 }
 
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 async function processListingPublish(supabase: any, job: any): Promise<any> {
-  const { offerId } = job.input;
+  const { offerId } = job.input || {};
+  if (!offerId) throw new Error("offerId missing");
 
   const { data: offer } = await supabase
-    .from("ebay_offers").select("*").eq("id", offerId).eq("seller_id", job.seller_id).maybeSingle();
+    .from("ebay_offers")
+    .select("id, listing_id")
+    .eq("id", offerId)
+    .eq("seller_id", job.seller_id)
+    .maybeSingle();
 
   if (!offer) throw new Error("Offer not found");
   if (offer.listing_id) return { message: "Already published", listingId: offer.listing_id };
 
-  // Get source product for images/description
-  const { data: sp } = await supabase
-    .from("source_products").select("*").eq("source_id", offer.sku).eq("seller_id", job.seller_id).maybeSingle();
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-  const images = (sp?.images_json as string[]) || [];
-  const description = sp?.description || offer.title || "";
-  const pictureXml = images.map((url: string) => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
-
-  // Escape title for XML (description goes into CDATA so it's safe)
-  const safeTitle = escapeXml((offer.title || "").substring(0, 80));
-  const safeSku = escapeXml(offer.sku || "");
-
-  const xml = await ebayTradingCall({
-    callName: "AddFixedPriceItem",
-    body: `
-      <Item>
-        <Title>${safeTitle}</Title>
-        <Description><![CDATA[${description}]]></Description>
-        <PrimaryCategory><CategoryID>${offer.category_id || "175673"}</CategoryID></PrimaryCategory>
-        <StartPrice currencyID="EUR">${offer.price}</StartPrice>
-        <Quantity>${offer.quantity || 1}</Quantity>
-        <ListingDuration>GTC</ListingDuration>
-        <ListingType>FixedPriceItem</ListingType>
-        <Country>DE</Country>
-        <Currency>EUR</Currency>
-        <Site>Germany</Site>
-        <SKU>${safeSku}</SKU>
-        <PictureDetails>${pictureXml}</PictureDetails>
-        <ConditionID>1000</ConditionID>
-        <DispatchTimeMax>3</DispatchTimeMax>
-      </Item>
-    `,
+  const res = await fetch(`${supabaseUrl}/functions/v1/ebay-publish-offer`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${serviceKey}`,
+    },
+    body: JSON.stringify({
+      sellerId: job.seller_id,
+      offerId,
+      action: "publish",
+    }),
   });
 
-  const { xmlValue: xv } = await import("../_shared/ebay-auth.ts");
-  const itemId = xv(xml, "ItemID");
-
-  if (itemId) {
-    await supabase.from("ebay_offers").update({
-      listing_id: itemId, state: "published",
-    }).eq("id", offerId);
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || `Publish failed (${res.status})`);
   }
 
-  return { listingId: itemId, message: "Published to eBay" };
+  return {
+    listingId: payload?.listingId || null,
+    message: payload?.message || "Published to eBay",
+  };
 }
 
 async function processAutopilotDiscovery(supabase: any, job: any): Promise<any> {
