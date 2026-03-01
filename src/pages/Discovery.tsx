@@ -14,6 +14,8 @@ import {
   Truck,
   Star,
   Eye,
+  Pause,
+  Sparkles,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -121,6 +123,58 @@ export default function DiscoveryPage() {
     onError: (err: Error) => toast.error("Discovery Fehler", { description: err.message }),
   });
 
+  const deactivateStale = useMutation({
+    mutationFn: async () => {
+      if (!apiKey) throw new Error("API Key benötigt");
+      const res = await fetch(
+        `https://${PROJECT_ID}.supabase.co/functions/v1/api/v1/listings/deactivate-stale`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+        }
+      );
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast.success("Stale Listings deaktiviert", {
+        description: `${data.deactivated || 0} von ${data.checked || 0} deaktiviert`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["discovery-status"] });
+    },
+    onError: (err: Error) => toast.error("Fehler", { description: err.message }),
+  });
+
+  const optimizeListings = useMutation({
+    mutationFn: async () => {
+      if (!apiKey) throw new Error("API Key benötigt");
+      const res = await fetch(
+        `https://${PROJECT_ID}.supabase.co/functions/v1/api/v1/listings/optimize`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({ action: "full" }),
+        }
+      );
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      const opt = data.optimization?.actions || {};
+      toast.success("Optimierung abgeschlossen", {
+        description: `${opt.deactivate_stale?.deactivated || 0} deaktiviert, ${opt.optimize_titles?.optimized || 0} Titel optimiert`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["discovery-status"] });
+    },
+    onError: (err: Error) => toast.error("Fehler", { description: err.message }),
+  });
+
   return (
     <DashboardLayout>
       <div className="space-y-8 animate-slide-in">
@@ -173,6 +227,32 @@ export default function DiscoveryPage() {
                 <Play className="w-4 h-4" />
               )}
               Discovery starten
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => deactivateStale.mutate()}
+              disabled={!apiKey || deactivateStale.isPending}
+              className="gap-1.5"
+            >
+              {deactivateStale.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Pause className="w-4 h-4" />
+              )}
+              Stale deaktivieren
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => optimizeListings.mutate()}
+              disabled={!apiKey || optimizeListings.isPending}
+              className="gap-1.5"
+            >
+              {optimizeListings.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              Optimieren
             </Button>
           </div>
         </div>

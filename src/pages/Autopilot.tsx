@@ -15,6 +15,8 @@ import {
   Loader2,
   Play,
   Activity,
+  Search,
+  TrendingUp,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -185,7 +187,7 @@ export default function AutopilotPage() {
     mutationFn: async (workflows?: string[]) => {
       if (!apiKey) throw new Error("API Key benötigt");
       return callApi("/v1/autopilot/run", "POST", apiKey, {
-        workflows: workflows || ["order_sync", "fulfillment", "tracking", "listings"],
+        workflows: workflows || ["order_sync", "fulfillment", "tracking", "listings", "discovery", "optimize"],
       });
     },
     onSuccess: (data) => {
@@ -294,6 +296,8 @@ export default function AutopilotPage() {
             { id: "fulfillment", label: "Fulfillment", icon: Truck, desc: "CJ Orders erstellen" },
             { id: "tracking", label: "Tracking Sync", icon: MapPin, desc: "Tracking → eBay pushen" },
             { id: "listings", label: "Listings erstellen", icon: Package, desc: "Neue Listings publizieren" },
+            { id: "discovery", label: "Discovery", icon: Search, desc: "Neue Produkte suchen" },
+            { id: "optimize", label: "Optimierung", icon: TrendingUp, desc: "Stale Listings deaktivieren" },
           ].map((wf) => (
             <button
               key={wf.id}
