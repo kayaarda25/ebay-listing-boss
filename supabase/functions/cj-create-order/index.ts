@@ -157,6 +157,32 @@ Deno.serve(async (req) => {
     } else if (rawCountry.length > 0) {
       countryCode = countryNameToCode[rawCountry.toLowerCase()] || "DE";
     }
+
+    // Query available shipping methods via CJ Freight API
+    const firstProduct = orderProducts[0];
+    const freightRes = await fetch(`${CJ_BASE}/logistic/freightCalculate`, {
+      method: "POST",
+      headers: { "CJ-Access-Token": token, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startCountryCode: "CN",
+        endCountryCode: countryCode,
+        products: orderProducts.map(p => ({ quantity: p.quantity, vid: p.vid })),
+      }),
+    });
+    const freightData = await freightRes.json();
+    console.log("CJ freight options:", JSON.stringify(freightData));
+
+    let logisticName = "CJPacket Ordinary"; // fallback
+    if (freightData.code === 200 && freightData.data?.length > 0) {
+      // Pick cheapest available shipping method
+      const cheapest = freightData.data
+        .filter((f: any) => f.logisticName && f.logisticPrice != null)
+        .sort((a: any, b: any) => (a.logisticPrice || 999) - (b.logisticPrice || 999))[0];
+      if (cheapest) {
+        logisticName = cheapest.logisticName;
+        console.log(`Selected shipping: ${logisticName} (${cheapest.logisticPrice} ${cheapest.logisticPriceCurrency || "USD"}, ~${cheapest.logisticAging || "?"} days)`);
+      }
+    }
     
     const cjOrderPayload = {
       orderNumber: order.order_id,
@@ -169,7 +195,7 @@ Deno.serve(async (req) => {
       shippingCustomerName: buyer.name || "",
       shippingPhone: address.phone || "0000000000",
       fromCountryCode: "CN",
-      logisticName: "CJPacket Ordinary",
+      logisticName,
       remark: `eBay Order ${order.order_id}`,
       products: orderProducts,
     };
