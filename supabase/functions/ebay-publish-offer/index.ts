@@ -46,14 +46,14 @@ Deno.serve(async (req) => {
 
     if (action === "publish" || action === "create") {
       if (offer.listing_id) {
-        // ReviseFixedPriceItem – update existing listing
+        // ReviseItem – update existing listing
         const xml = await ebayTradingCall({
-          callName: "ReviseFixedPriceItem",
+          callName: "ReviseItem",
           body: `
             <Item>
               <ItemID>${offer.listing_id}</ItemID>
-              <StartPrice>${offer.price || 0}</StartPrice>
-              <Quantity>${offer.quantity || 1}</Quantity>
+              <StartPrice currencyID="EUR">${offer.price || 0}</StartPrice>
+              <Quantity>1</Quantity>
             </Item>
           `,
         });
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       } else {
-        // AddItem – create new listing (use AddItem for accounts without FixedPrice privileges)
+        // AddItem – Auktion, da Festpreis für neue Seller oft nicht erlaubt
         const title = (product?.title || offer.sku).substring(0, 80);
         const description = product?.description || title;
         const rawImages = (product?.images_json as string[]) || [];
@@ -77,12 +77,15 @@ Deno.serve(async (req) => {
           .slice(0, 12);
         const pictureUrls = images.map(url => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
 
-        // Use a safe leaf category: 176984 = "Sonstige" under Haustierbedarf
-        // If offer has a specific category, use that instead
-        const categoryId = offer.category_id || "177";
+        // Default to "Sonstige" (1) – a valid catch-all leaf category
+        const categoryId = offer.category_id || "1";
+
+        // Build item specifics from product attributes
+        const attributes = (product?.attributes_json as Record<string, string>) || {};
+        const itemSpecifics = buildItemSpecifics(attributes);
 
         const xml = await ebayTradingCall({
-          callName: "AddFixedPriceItem",
+          callName: "AddItem",
           body: `
             <Item>
               <Title>${escapeXml(title)}</Title>
@@ -91,9 +94,9 @@ Deno.serve(async (req) => {
                 <CategoryID>${categoryId}</CategoryID>
               </PrimaryCategory>
               <StartPrice currencyID="EUR">${offer.price || 0}</StartPrice>
-              <Quantity>${offer.quantity || 1}</Quantity>
-              <ListingDuration>GTC</ListingDuration>
-              <ListingType>FixedPriceItem</ListingType>
+              <Quantity>1</Quantity>
+              <ListingDuration>Days_30</ListingDuration>
+              <ListingType>Chinese</ListingType>
               <Country>DE</Country>
               <Currency>EUR</Currency>
               <Location>Deutschland</Location>
@@ -109,6 +112,7 @@ Deno.serve(async (req) => {
                   <ShippingServicePriority>1</ShippingServicePriority>
                   <ShippingService>DE_DHLPaket</ShippingService>
                   <ShippingServiceCost currencyID="EUR">0.00</ShippingServiceCost>
+                  <ShippingServiceAdditionalCost currencyID="EUR">0.00</ShippingServiceAdditionalCost>
                   <FreeShipping>true</FreeShipping>
                 </ShippingServiceOptions>
               </ShippingDetails>
@@ -117,6 +121,7 @@ Deno.serve(async (req) => {
                 <ReturnsWithinOption>Days_30</ReturnsWithinOption>
                 <ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>
               </ReturnPolicy>
+              ${itemSpecifics}
             </Item>
           `,
         });
@@ -128,7 +133,7 @@ Deno.serve(async (req) => {
             JSON.stringify({
               success: false,
               code: "EBAY_NO_ITEM_CREATED",
-              error: "eBay hat das Listing nicht erstellt. Mögliche Ursache: Kontoeinschränkungen (z.B. einbehaltene Zahlungen) oder fehlende Pflichtangaben. Bitte prüfe dein eBay-Konto und versuche es erneut.",
+              error: "eBay hat das Listing nicht erstellt. Prüfe dein eBay-Konto auf Einschränkungen.",
             }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
@@ -153,7 +158,7 @@ Deno.serve(async (req) => {
       }
 
       await ebayTradingCall({
-        callName: "EndFixedPriceItem",
+        callName: "EndItem",
         body: `
           <ItemID>${offer.listing_id}</ItemID>
           <EndingReason>NotAvailable</EndingReason>
@@ -179,18 +184,6 @@ Deno.serve(async (req) => {
     const errorMessage = String(error);
     console.error('Error:', error);
 
-    if (isPaymentHoldError(errorMessage)) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          code: "EBAY_PAYMENT_HOLD",
-          error:
-            "eBay blockiert neue Listings wegen einbehaltener Zahlungen. Bitte prüfe dein eBay-Konto unter 'Einbehaltene Zahlungen' und versuche es danach erneut.",
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -198,13 +191,22 @@ Deno.serve(async (req) => {
   }
 });
 
-function isPaymentHoldError(message: string): boolean {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("einbehalten") ||
-    normalized.includes("pending-payments") ||
-    normalized.includes("nicht verfügbar")
-  );
+/** Build <ItemSpecifics> XML from product attributes. 
+ *  Always includes "Marke" = "Unbranded" as fallback. */
+function buildItemSpecifics(attributes: Record<string, string>): string {
+  const specs: Record<string, string> = { Marke: "Markenlos", ...attributes };
+
+  const nameValues = Object.entries(specs)
+    .filter(([_, v]) => v && v.trim())
+    .map(([name, value]) => `
+      <NameValueList>
+        <Name>${escapeXml(name)}</Name>
+        <Value>${escapeXml(String(value).substring(0, 65))}</Value>
+      </NameValueList>`)
+    .join("");
+
+  if (!nameValues) return "";
+  return `<ItemSpecifics>${nameValues}</ItemSpecifics>`;
 }
 
 function escapeXml(str: string): string {
