@@ -153,6 +153,44 @@ export type Database = {
         }
         Relationships: []
       }
+      autopilot_reports: {
+        Row: {
+          created_at: string
+          details: Json
+          id: string
+          report_type: string
+          seller_id: string
+          stats: Json
+          summary: string
+        }
+        Insert: {
+          created_at?: string
+          details?: Json
+          id?: string
+          report_type?: string
+          seller_id: string
+          stats?: Json
+          summary: string
+        }
+        Update: {
+          created_at?: string
+          details?: Json
+          id?: string
+          report_type?: string
+          seller_id?: string
+          stats?: Json
+          summary?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "autopilot_reports_seller_id_fkey"
+            columns: ["seller_id"]
+            isOneToOne: false
+            referencedRelation: "sellers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ebay_inventory_items: {
         Row: {
           created_at: string

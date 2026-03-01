@@ -53,27 +53,22 @@ Deno.serve(async (req) => {
       
       if (Date.now() - lastRun < intervalMs) continue;
 
-      // Queue autopilot workflows as jobs
-      const workflows = settings.autopilot_workflows || ["order_sync", "fulfillment", "tracking", "listings", "discovery", "optimize"];
-      
-      for (const wf of workflows) {
-        // Check if same type job is already queued/running for this seller
-        const { data: existingJob } = await supabase
-          .from("jobs")
-          .select("id")
-          .eq("seller_id", seller.id)
-          .eq("type", `autopilot_${wf}`)
-          .in("state", ["queued", "running"])
-          .maybeSingle();
+      // Queue a single autopilot_cycle job that runs all workflows sequentially and generates a report
+      const { data: existingCycle } = await supabase
+        .from("jobs")
+        .select("id")
+        .eq("seller_id", seller.id)
+        .eq("type", "autopilot_cycle")
+        .in("state", ["queued", "running"])
+        .maybeSingle();
 
-        if (!existingJob) {
-          await supabase.from("jobs").insert({
-            seller_id: seller.id,
-            type: `autopilot_${wf}`,
-            input: { workflow: wf, auto: true },
-            state: "queued",
-          });
-        }
+      if (!existingCycle) {
+        await supabase.from("jobs").insert({
+          seller_id: seller.id,
+          type: "autopilot_cycle",
+          input: { workflows: settings.autopilot_workflows || ["discovery", "listings", "order_sync", "fulfillment", "tracking", "optimize"], auto: true },
+          state: "queued",
+        });
       }
 
       // Update last run timestamp
@@ -122,6 +117,9 @@ Deno.serve(async (req) => {
           break;
         case "autopilot_optimize":
           output = await processAutopilotOptimize(supabase, job);
+          break;
+        case "autopilot_cycle":
+          output = await processAutopilotCycle(supabase, job);
           break;
         default:
           throw new Error(`Unknown job type: ${job.type}`);
@@ -485,4 +483,177 @@ async function processAutopilotOptimize(supabase: any, job: any): Promise<any> {
     }
   }
   return { checked: staleListings.length, deactivated };
+}
+
+// ==================== AUTOPILOT CYCLE WITH REPORT ====================
+
+async function processAutopilotCycle(supabase: any, job: any): Promise<any> {
+  const sellerId = job.seller_id;
+  const workflows: string[] = job.input?.workflows || ["discovery", "listings", "order_sync", "fulfillment", "tracking", "optimize"];
+  
+  const reportDetails: { icon: string; text: string }[] = [];
+  const stats: Record<string, number> = {};
+  const errors: string[] = [];
+
+  // 1. DISCOVERY
+  if (workflows.includes("discovery")) {
+    try {
+      const result = await processAutopilotDiscovery(supabase, job);
+      const discovered = result.discovered || 0;
+      const imported = result.imported || 0;
+      stats.entdeckt = discovered;
+      stats.importiert = imported;
+      if (discovered > 0) {
+        reportDetails.push({ icon: "discovery", text: `${discovered} neue Produkte entdeckt, ${imported} importiert` });
+      } else {
+        reportDetails.push({ icon: "info", text: "Keine neuen Produkte gefunden" });
+      }
+    } catch (err) {
+      errors.push(`Discovery: ${String(err)}`);
+      reportDetails.push({ icon: "error", text: `Discovery fehlgeschlagen: ${String(err).substring(0, 100)}` });
+    }
+  }
+
+  // 2. AUTO-LIST new draft offers
+  if (workflows.includes("listings")) {
+    try {
+      const { data: drafts } = await supabase
+        .from("ebay_offers")
+        .select("id, title, sku")
+        .eq("seller_id", sellerId)
+        .eq("state", "draft")
+        .is("listing_id", null)
+        .limit(10);
+
+      let listed = 0;
+      let listErrors = 0;
+      for (const draft of drafts || []) {
+        try {
+          await processListingPublish(supabase, { ...job, input: { offerId: draft.id } });
+          listed++;
+          reportDetails.push({ icon: "listing", text: `Listing erstellt: ${(draft.title || draft.sku).substring(0, 60)}` });
+        } catch (err) {
+          listErrors++;
+          const errMsg = String(err);
+          // Don't fail entire cycle for payment-hold warnings
+          if (errMsg.includes("einbehalten") || errMsg.includes("pending-payments")) {
+            reportDetails.push({ icon: "error", text: `Listing blockiert (Zahlungseinbehaltung): ${(draft.title || draft.sku).substring(0, 40)}` });
+          } else {
+            reportDetails.push({ icon: "error", text: `Listing Fehler: ${errMsg.substring(0, 80)}` });
+          }
+        }
+      }
+      stats.gelistet = listed;
+      if (listErrors > 0) stats.listing_fehler = listErrors;
+    } catch (err) {
+      errors.push(`Listings: ${String(err)}`);
+    }
+  }
+
+  // 3. ORDER SYNC
+  if (workflows.includes("order_sync")) {
+    try {
+      const result = await processOrdersSync(supabase, job);
+      stats.orders_synced = result.synced || 0;
+      if (result.synced > 0) {
+        reportDetails.push({ icon: "order", text: `${result.synced} Bestellungen synchronisiert` });
+      }
+    } catch (err) {
+      errors.push(`Order Sync: ${String(err)}`);
+      reportDetails.push({ icon: "error", text: `Order-Sync fehlgeschlagen: ${String(err).substring(0, 80)}` });
+    }
+  }
+
+  // 4. FULFILLMENT - auto-fulfill pending orders with SKU mappings
+  if (workflows.includes("fulfillment")) {
+    try {
+      const { data: pendingOrders } = await supabase
+        .from("orders")
+        .select("id, order_id")
+        .eq("seller_id", sellerId)
+        .eq("needs_fulfillment", true)
+        .in("order_status", ["pending", "processing"])
+        .limit(10);
+
+      let fulfilled = 0;
+      for (const order of pendingOrders || []) {
+        try {
+          await processOrderFulfill(supabase, { ...job, input: { orderId: order.id } });
+          fulfilled++;
+          reportDetails.push({ icon: "fulfillment", text: `Order ${order.order_id} fulfilled` });
+        } catch {
+          // Silently skip orders without SKU mappings
+        }
+      }
+      stats.fulfilled = fulfilled;
+    } catch (err) {
+      errors.push(`Fulfillment: ${String(err)}`);
+    }
+  }
+
+  // 5. TRACKING
+  if (workflows.includes("tracking")) {
+    try {
+      const { data: processingOrders } = await supabase
+        .from("orders")
+        .select("id, order_id")
+        .eq("seller_id", sellerId)
+        .eq("order_status", "processing")
+        .limit(20);
+
+      let tracked = 0;
+      for (const order of processingOrders || []) {
+        try {
+          const result = await processTrackingSync(supabase, { ...job, input: { orderId: order.id } });
+          if (result.updated) {
+            tracked++;
+            reportDetails.push({ icon: "tracking", text: `Tracking für Order ${order.order_id}: ${result.trackingNumber}` });
+          }
+        } catch {
+          // Skip orders without CJ order ID
+        }
+      }
+      if (tracked > 0) stats.tracking = tracked;
+    } catch (err) {
+      errors.push(`Tracking: ${String(err)}`);
+    }
+  }
+
+  // 6. OPTIMIZE
+  if (workflows.includes("optimize")) {
+    try {
+      const result = await processAutopilotOptimize(supabase, job);
+      if (result.deactivated > 0) {
+        stats.deaktiviert = result.deactivated;
+        reportDetails.push({ icon: "optimize", text: `${result.deactivated} inaktive Listings pausiert` });
+      }
+    } catch (err) {
+      errors.push(`Optimize: ${String(err)}`);
+    }
+  }
+
+  // Build human summary
+  const parts: string[] = [];
+  if (stats.entdeckt) parts.push(`${stats.entdeckt} Produkte entdeckt`);
+  if (stats.gelistet) parts.push(`${stats.gelistet} gelistet`);
+  if (stats.orders_synced) parts.push(`${stats.orders_synced} Orders synchronisiert`);
+  if (stats.fulfilled) parts.push(`${stats.fulfilled} Orders fulfilled`);
+  if (stats.tracking) parts.push(`${stats.tracking} Trackings aktualisiert`);
+  if (stats.deaktiviert) parts.push(`${stats.deaktiviert} Listings pausiert`);
+  if (errors.length > 0) parts.push(`${errors.length} Fehler`);
+
+  const summary = parts.length > 0
+    ? `Autopilot-Zyklus: ${parts.join(", ")}`
+    : "Autopilot-Zyklus: Keine Änderungen";
+
+  // Write report
+  await supabase.from("autopilot_reports").insert({
+    seller_id: sellerId,
+    report_type: "cycle",
+    summary,
+    details: reportDetails,
+    stats,
+  });
+
+  return { summary, stats, errors };
 }
