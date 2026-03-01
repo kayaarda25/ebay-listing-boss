@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ebayTradingCall, xmlValue } from "../_shared/ebay-auth.ts";
+import { ebayTradingCall, xmlBlocks, xmlValue } from "../_shared/ebay-auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -77,11 +77,26 @@ Deno.serve(async (req) => {
           .slice(0, 12);
         const pictureUrls = images.map(url => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
 
-        const categoryId = offer.category_id || suggestCategoryId(title);
-
         // Build item specifics from product attributes
         const attributes = (product?.attributes_json as Record<string, string>) || {};
         const itemSpecifics = buildItemSpecifics(attributes);
+
+        const categoryId = await resolveValidCategoryId({
+          preferredCategoryId: offer.category_id,
+          title,
+          description,
+          price: offer.price || 0,
+          sku: offer.sku,
+          pictureUrls,
+          itemSpecifics,
+        });
+
+        if (!categoryId) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Keine gültige eBay-Kategorie gefunden. Bitte Kategorie manuell setzen.' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
 
         const xml = await publishAuctionListing({
           title,
@@ -167,9 +182,20 @@ interface PublishAuctionListingParams {
   sku: string;
   pictureUrls: string;
   itemSpecifics: string;
+  conditionId?: string | null;
 }
 
-async function publishAuctionListing({
+interface ResolveCategoryParams {
+  preferredCategoryId?: string | null;
+  title: string;
+  description: string;
+  price: number;
+  sku: string;
+  pictureUrls: string;
+  itemSpecifics: string;
+}
+
+function buildAuctionItemBody({
   title,
   description,
   categoryId,
@@ -177,47 +203,215 @@ async function publishAuctionListing({
   sku,
   pictureUrls,
   itemSpecifics,
-}: PublishAuctionListingParams): Promise<string> {
+  conditionId,
+}: PublishAuctionListingParams): string {
+  return `
+    <Item>
+      <Title>${escapeXml(title)}</Title>
+      <Description><![CDATA[${description}]]></Description>
+      <PrimaryCategory>
+        <CategoryID>${categoryId}</CategoryID>
+      </PrimaryCategory>
+      <StartPrice currencyID="EUR">${price}</StartPrice>
+      <Quantity>1</Quantity>
+      <ListingDuration>Days_7</ListingDuration>
+      <ListingType>Chinese</ListingType>
+      <Country>DE</Country>
+      <Currency>EUR</Currency>
+      <Location>Deutschland</Location>
+      <SKU>${escapeXml(sku)}</SKU>
+      ${conditionId ? `<ConditionID>${conditionId}</ConditionID>` : ""}
+      <PictureDetails>
+        ${pictureUrls}
+      </PictureDetails>
+      <DispatchTimeMax>3</DispatchTimeMax>
+      <ShippingDetails>
+        <ShippingType>Flat</ShippingType>
+        <ShippingServiceOptions>
+          <ShippingServicePriority>1</ShippingServicePriority>
+          <ShippingService>DE_DHLPaket</ShippingService>
+          <ShippingServiceCost currencyID="EUR">0.00</ShippingServiceCost>
+          <ShippingServiceAdditionalCost currencyID="EUR">0.00</ShippingServiceAdditionalCost>
+          <FreeShipping>true</FreeShipping>
+        </ShippingServiceOptions>
+      </ShippingDetails>
+      <ReturnPolicy>
+        <ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>
+        <ReturnsWithinOption>Days_30</ReturnsWithinOption>
+        <ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>
+      </ReturnPolicy>
+      ${itemSpecifics}
+    </Item>
+  `;
+}
+
+async function publishAuctionListing(params: PublishAuctionListingParams): Promise<string> {
+  try {
+    return await ebayTradingCall({
+      callName: "AddItem",
+      body: buildAuctionItemBody(params),
+    });
+  } catch (error) {
+    const message = String(error);
+    const needsCondition = message.includes("Artikelzustand ist für diese Kategorie erforderlich");
+
+    if (!needsCondition || params.conditionId) {
+      throw error;
+    }
+
+    return ebayTradingCall({
+      callName: "AddItem",
+      body: buildAuctionItemBody({ ...params, conditionId: "1000" }),
+    });
+  }
+}
+
+async function verifyAuctionListing(params: PublishAuctionListingParams): Promise<string> {
   return ebayTradingCall({
-    callName: "AddItem",
-    body: `
-      <Item>
-        <Title>${escapeXml(title)}</Title>
-        <Description><![CDATA[${description}]]></Description>
-        <PrimaryCategory>
-          <CategoryID>${categoryId}</CategoryID>
-        </PrimaryCategory>
-        <StartPrice currencyID="EUR">${price}</StartPrice>
-        <Quantity>1</Quantity>
-        <ListingDuration>Days_7</ListingDuration>
-        <ListingType>Chinese</ListingType>
-        <Country>DE</Country>
-        <Currency>EUR</Currency>
-        <Location>Deutschland</Location>
-        <SKU>${escapeXml(sku)}</SKU>
-        <PictureDetails>
-          ${pictureUrls}
-        </PictureDetails>
-        <DispatchTimeMax>3</DispatchTimeMax>
-        <ShippingDetails>
-          <ShippingType>Flat</ShippingType>
-          <ShippingServiceOptions>
-            <ShippingServicePriority>1</ShippingServicePriority>
-            <ShippingService>DE_DHLPaket</ShippingService>
-            <ShippingServiceCost currencyID="EUR">0.00</ShippingServiceCost>
-            <ShippingServiceAdditionalCost currencyID="EUR">0.00</ShippingServiceAdditionalCost>
-            <FreeShipping>true</FreeShipping>
-          </ShippingServiceOptions>
-        </ShippingDetails>
-        <ReturnPolicy>
-          <ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>
-          <ReturnsWithinOption>Days_30</ReturnsWithinOption>
-          <ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>
-        </ReturnPolicy>
-        ${itemSpecifics}
-      </Item>
-    `,
+    callName: "VerifyAddItem",
+    body: buildAuctionItemBody(params),
   });
+}
+
+async function findLeafCategoryFromParent(parentCategoryId: string): Promise<string | null> {
+  try {
+    const xml = await ebayTradingCall({
+      callName: "GetCategories",
+      body: `
+        <CategorySiteID>77</CategorySiteID>
+        <CategoryParent>${parentCategoryId}</CategoryParent>
+        <DetailLevel>ReturnAll</DetailLevel>
+        <LevelLimit>2</LevelLimit>
+        <ViewAllNodes>true</ViewAllNodes>
+      `,
+    });
+
+    const categoryBlocks = xmlBlocks(xml, "Category");
+    for (const block of categoryBlocks) {
+      const id = xmlValue(block, "CategoryID");
+      const isLeaf = xmlValue(block, "LeafCategory")?.toLowerCase() === "true";
+      if (id && id !== parentCategoryId && isLeaf) {
+        return id;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.warn(`GetCategories failed for parent ${parentCategoryId}:`, String(error));
+    return null;
+  }
+}
+
+async function findAnyLeafCategoryId(): Promise<string | null> {
+  try {
+    const xml = await ebayTradingCall({
+      callName: "GetCategories",
+      body: `
+        <CategorySiteID>77</CategorySiteID>
+        <DetailLevel>ReturnAll</DetailLevel>
+        <LevelLimit>6</LevelLimit>
+        <ViewAllNodes>true</ViewAllNodes>
+      `,
+    });
+
+    const categoryBlocks = xmlBlocks(xml, "Category");
+    for (const block of categoryBlocks) {
+      const id = xmlValue(block, "CategoryID");
+      const isLeaf = xmlValue(block, "LeafCategory")?.toLowerCase() === "true";
+      if (id && isLeaf) {
+        return id;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.warn("GetCategories fallback lookup failed:", String(error));
+    return null;
+  }
+}
+
+async function resolveValidCategoryId({
+  preferredCategoryId,
+  title,
+  description,
+  price,
+  sku,
+  pictureUrls,
+  itemSpecifics,
+}: ResolveCategoryParams): Promise<string | null> {
+  const candidates = [preferredCategoryId, "175673", suggestCategoryId(title)]
+    .filter((v): v is string => Boolean(v));
+
+  const uniqueCandidates = [...new Set(candidates)];
+
+  for (const candidateCategoryId of uniqueCandidates) {
+    try {
+      await verifyAuctionListing({
+        title,
+        description,
+        categoryId: candidateCategoryId,
+        price,
+        sku,
+        pictureUrls,
+        itemSpecifics,
+      });
+      return candidateCategoryId;
+    } catch (error) {
+      const message = String(error);
+
+      if (message.includes("Unterkategorie")) {
+        const leafCategoryId = await findLeafCategoryFromParent(candidateCategoryId);
+        if (!leafCategoryId) continue;
+
+        try {
+          await verifyAuctionListing({
+            title,
+            description,
+            categoryId: leafCategoryId,
+            price,
+            sku,
+            pictureUrls,
+            itemSpecifics,
+          });
+          return leafCategoryId;
+        } catch (leafError) {
+          const leafMessage = String(leafError);
+          if (leafMessage.includes("Kategorie ist nicht gültig") || leafMessage.includes("Unterkategorie")) {
+            continue;
+          }
+          return leafCategoryId;
+        }
+      }
+
+      if (message.includes("Kategorie ist nicht gültig")) {
+        console.warn(`Category ${candidateCategoryId} invalid, trying next`);
+        continue;
+      }
+
+      // Category likely valid; proceed with this one and let AddItem return concrete validation errors if any.
+      return candidateCategoryId;
+    }
+  }
+
+  const fallbackLeafCategoryId = await findAnyLeafCategoryId();
+  if (!fallbackLeafCategoryId) {
+    return null;
+  }
+
+  try {
+    await verifyAuctionListing({
+      title,
+      description,
+      categoryId: fallbackLeafCategoryId,
+      price,
+      sku,
+      pictureUrls,
+      itemSpecifics,
+    });
+    return fallbackLeafCategoryId;
+  } catch {
+    return null;
+  }
 }
 
 /** Keyword-based category mapping for eBay.de leaf categories.
