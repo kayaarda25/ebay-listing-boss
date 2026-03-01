@@ -381,7 +381,7 @@ function calculateScore(product: any, price: number, shippingCost: number, wareh
   score += Math.max(0, 40 - price); // up to 40 points
 
   // Prefer EU core warehouses
-  const warehouseScores: Record<string, number> = { DE: 30, PL: 25, CZ: 22, FR: 20, ES: 18, GB: 18, CN: 8 };
+  const warehouseScores: Record<string, number> = { CN: 35, DE: 30, PL: 25, CZ: 22, FR: 20, ES: 18, GB: 18 };
   score += warehouseScores[warehouse] || 10;
 
   // Prefer lower shipping
