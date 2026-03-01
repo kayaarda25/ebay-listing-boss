@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       } else {
-        // AddItem – Auktion, da Festpreis für neue Seller oft nicht erlaubt
+        // AddFixedPriceItem – Sofort-Kaufen Festpreis
         const dbImages = normalizeImageUrls(product?.images_json);
         const cjFallback = dbImages.length === 0 ? await fetchCjProductBySku(offer.sku) : null;
 
@@ -232,8 +232,8 @@ function buildAuctionItemBody({
       </PrimaryCategory>
       <StartPrice currencyID="EUR">${price}</StartPrice>
       <Quantity>1</Quantity>
-      <ListingDuration>Days_7</ListingDuration>
-      <ListingType>Chinese</ListingType>
+      <ListingDuration>GTC</ListingDuration>
+      <ListingType>FixedPriceItem</ListingType>
       <Country>DE</Country>
       <Currency>EUR</Currency>
       <Location>Deutschland</Location>
@@ -266,7 +266,7 @@ function buildAuctionItemBody({
 async function publishAuctionListing(params: PublishAuctionListingParams): Promise<string> {
   try {
     return await ebayTradingCall({
-      callName: "AddItem",
+      callName: "AddFixedPriceItem",
       body: buildAuctionItemBody(params),
       sellerId: params.sellerId,
     });
@@ -279,7 +279,7 @@ async function publishAuctionListing(params: PublishAuctionListingParams): Promi
     }
 
     return ebayTradingCall({
-      callName: "AddItem",
+      callName: "AddFixedPriceItem",
       body: buildAuctionItemBody({ ...params, conditionId: "1000" }),
       sellerId: params.sellerId,
     });
@@ -289,7 +289,7 @@ async function publishAuctionListing(params: PublishAuctionListingParams): Promi
 /** Verify listing – always includes ConditionID to avoid spurious errors */
 async function verifyAuctionListing(params: PublishAuctionListingParams): Promise<string> {
   return ebayTradingCall({
-    callName: "VerifyAddItem",
+    callName: "VerifyAddFixedPriceItem",
     body: buildAuctionItemBody({ ...params, conditionId: params.conditionId || "1000" }),
     sellerId: params.sellerId,
   });
