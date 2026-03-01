@@ -83,6 +83,10 @@ async function routeRequest(ctx: ApiContext, req: Request, path: string): Promis
   const keyPatch = path.match(/^\/v1\/api-keys\/([^/]+)$/);
   if (keyPatch && method === "PATCH") return handlePatchApiKey(ctx, keyPatch[1], req);
 
+  // === AUTOPILOT ===
+  if (path === "/v1/autopilot/run" && method === "POST") return handleAutopilotRun(ctx, req);
+  if (path === "/v1/autopilot/status" && method === "GET") return handleAutopilotStatus(ctx);
+
   return errorResponse("Not found", 404, "NOT_FOUND");
 }
 
@@ -712,4 +716,188 @@ async function handlePatchApiKey(ctx: ApiContext, id: string, req: Request): Pro
 
   if (error) return errorResponse(error.message, 500);
   return jsonResponse({ ok: true, apiKey: data });
+}
+
+// ==================== AUTOPILOT ====================
+
+async function handleAutopilotRun(ctx: ApiContext, req: Request): Promise<Response> {
+  const body = await req.json().catch(() => ({}));
+  const workflows = body.workflows || ["order_sync", "fulfillment", "tracking", "listings"];
+  const listingTarget = body.listingTarget || 100;
+  
+  const results: any = { startedAt: new Date().toISOString(), workflows: {} };
+
+  // 1. ORDER SYNC
+  if (workflows.includes("order_sync")) {
+    try {
+      await executeOrdersSync(ctx);
+      results.workflows.order_sync = { status: "completed" };
+    } catch (err) {
+      results.workflows.order_sync = { status: "error", error: String(err) };
+    }
+  }
+
+  // 2. FULFILLMENT - process all awaiting orders
+  if (workflows.includes("fulfillment")) {
+    try {
+      const { data: awaitingOrders } = await ctx.supabase
+        .from("orders")
+        .select("id")
+        .eq("seller_id", ctx.sellerId)
+        .eq("needs_fulfillment", true)
+        .in("order_status", ["pending", "processing"])
+        .limit(20);
+
+      const fulfilled: string[] = [];
+      const errors: string[] = [];
+      for (const order of awaitingOrders || []) {
+        try {
+          await createJob(ctx, "order_fulfill", { orderId: order.id });
+          fulfilled.push(order.id);
+        } catch (err) {
+          errors.push(`${order.id}: ${err}`);
+        }
+      }
+      results.workflows.fulfillment = { status: "completed", queued: fulfilled.length, errors: errors.length };
+    } catch (err) {
+      results.workflows.fulfillment = { status: "error", error: String(err) };
+    }
+  }
+
+  // 3. TRACKING SYNC - for orders with CJ order IDs but no tracking pushed
+  if (workflows.includes("tracking")) {
+    try {
+      const { data: trackingOrders } = await ctx.supabase
+        .from("orders")
+        .select("id, buyer_json, shipments(*)")
+        .eq("seller_id", ctx.sellerId)
+        .eq("order_status", "processing")
+        .limit(20);
+
+      let synced = 0;
+      for (const order of trackingOrders || []) {
+        const buyer = order.buyer_json as any;
+        if (!buyer?.cj_order_id) continue;
+        const hasUnpushed = !order.shipments?.length || order.shipments.some((s: any) => !s.tracking_pushed);
+        if (hasUnpushed) {
+          await createJob(ctx, "tracking_sync", { orderId: order.id });
+          synced++;
+        }
+      }
+      results.workflows.tracking = { status: "completed", queued: synced };
+    } catch (err) {
+      results.workflows.tracking = { status: "error", error: String(err) };
+    }
+  }
+
+  // 4. LISTING AUTOMATION
+  if (workflows.includes("listings")) {
+    try {
+      // Count listings created today
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const { count: todayCount } = await ctx.supabase
+        .from("ebay_offers")
+        .select("id", { count: "exact", head: true })
+        .eq("seller_id", ctx.sellerId)
+        .gte("created_at", todayStart.toISOString());
+
+      const remaining = Math.max(0, listingTarget - (todayCount || 0));
+      
+      // Publish unpublished draft offers
+      if (remaining > 0) {
+        const { data: drafts } = await ctx.supabase
+          .from("ebay_offers")
+          .select("id")
+          .eq("seller_id", ctx.sellerId)
+          .eq("state", "draft")
+          .is("listing_id", null)
+          .limit(remaining);
+
+        for (const draft of drafts || []) {
+          await createJob(ctx, "listing_publish", { offerId: draft.id });
+        }
+        results.workflows.listings = { 
+          status: "completed", 
+          todayCount: todayCount || 0, 
+          target: listingTarget, 
+          newJobsQueued: drafts?.length || 0 
+        };
+      } else {
+        results.workflows.listings = { 
+          status: "target_reached", 
+          todayCount: todayCount || 0, 
+          target: listingTarget 
+        };
+      }
+    } catch (err) {
+      results.workflows.listings = { status: "error", error: String(err) };
+    }
+  }
+
+  results.completedAt = new Date().toISOString();
+  return jsonResponse({ ok: true, autopilot: results });
+}
+
+async function handleAutopilotStatus(ctx: ApiContext): Promise<Response> {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayISO = todayStart.toISOString();
+
+  // Parallel queries for dashboard stats
+  const [
+    awaitingRes,
+    fulfilledTodayRes,
+    listingsTodayRes,
+    recentJobsRes,
+    totalListingsRes,
+    totalOrdersRes,
+  ] = await Promise.all([
+    ctx.supabase
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_id", ctx.sellerId)
+      .eq("needs_fulfillment", true)
+      .in("order_status", ["pending", "processing"]),
+    ctx.supabase
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_id", ctx.sellerId)
+      .eq("order_status", "shipped")
+      .gte("updated_at", todayISO),
+    ctx.supabase
+      .from("ebay_offers")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_id", ctx.sellerId)
+      .gte("created_at", todayISO),
+    ctx.supabase
+      .from("jobs")
+      .select("id, type, state, error, created_at, updated_at")
+      .eq("seller_id", ctx.sellerId)
+      .order("created_at", { ascending: false })
+      .limit(20),
+    ctx.supabase
+      .from("ebay_offers")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_id", ctx.sellerId)
+      .in("state", ["published", "active"]),
+    ctx.supabase
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_id", ctx.sellerId),
+  ]);
+
+  return jsonResponse({
+    ok: true,
+    status: {
+      ordersAwaitingFulfillment: awaitingRes.count || 0,
+      ordersFulfilledToday: fulfilledTodayRes.count || 0,
+      listingsCreatedToday: listingsTodayRes.count || 0,
+      totalActiveListings: totalListingsRes.count || 0,
+      totalOrders: totalOrdersRes.count || 0,
+      recentJobs: recentJobsRes.data || [],
+      apiHealth: "online",
+      timestamp: new Date().toISOString(),
+    },
+  });
 }
