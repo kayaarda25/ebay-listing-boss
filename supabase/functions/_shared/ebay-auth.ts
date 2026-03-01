@@ -52,8 +52,9 @@ export async function ebayTradingCall({ callName, body, siteId = "77" }: EbayTra
     // If the response still contains an ItemID, the listing was created despite the "Failure"
     // eBay sometimes reports Failure for account-level warnings (e.g. payment holds)
     const hasItemId = /<ItemID>[^<]+<\/ItemID>/.test(text);
-    if (hasItemId) {
-      console.warn(`eBay reported Failure but ItemID found – treating as warning: ${errorMsg}`);
+    const isPaymentHoldWarning = isPaymentHoldMessage(errorMsg);
+    if (hasItemId || isPaymentHoldWarning) {
+      console.warn(`eBay reported Failure but treating as warning (itemId=${hasItemId}, paymentHold=${isPaymentHoldWarning}): ${errorMsg}`);
     } else {
       throw new Error(`eBay Error: ${errorMsg}`);
     }
@@ -90,4 +91,9 @@ export function xmlValues(xml: string, tag: string): string[] {
 export function xmlBlocks(xml: string, tag: string): string[] {
   const matches = [...xml.matchAll(new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "gs"))];
   return matches.map(m => m[1]);
+}
+
+function isPaymentHoldMessage(message: string): boolean {
+  const n = message.toLowerCase();
+  return n.includes("einbehalten") || n.includes("pending-payments") || n.includes("nicht verfügbar");
 }
