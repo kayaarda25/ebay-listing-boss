@@ -3,67 +3,20 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Zap,
-  RefreshCw,
-  Package,
-  Truck,
-  MapPin,
-  ShoppingCart,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Loader2,
-  Play,
-  Activity,
-  Search,
-  TrendingUp,
-  Power,
+  Zap, RefreshCw, Package, Truck, MapPin, ShoppingCart, CheckCircle2,
+  XCircle, Clock, Loader2, Play, Activity, Search, TrendingUp, Power,
 } from "lucide-react";
-import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
-const PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-
-async function callApi(path: string, method: string, token: string, body?: any) {
-  const res = await fetch(
-    `https://${PROJECT_ID}.supabase.co/functions/v1/api${path}`,
-    {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    }
-  );
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || res.statusText);
-  }
-  return res.json();
-}
-
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  color,
-}: {
-  label: string;
-  value: string | number;
-  icon: any;
-  color: string;
-}) {
+function StatCard({ label, value, icon: Icon, color }: { label: string; value: string | number; icon: any; color: string }) {
   return (
     <div className="stat-card">
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <p className="text-[13px] text-muted-foreground font-medium">{label}</p>
-          <p className="text-[28px] font-bold tracking-tight leading-none text-foreground">
-            {value}
-          </p>
+          <p className="text-[28px] font-bold tracking-tight leading-none text-foreground">{value}</p>
         </div>
         <div className={`p-2.5 rounded-xl ${color}`}>
           <Icon className="w-[18px] h-[18px]" />
@@ -80,12 +33,8 @@ function JobRow({ job }: { job: any }) {
     done: <CheckCircle2 className="w-3.5 h-3.5 text-success" />,
     failed: <XCircle className="w-3.5 h-3.5 text-destructive" />,
   };
-
   const stateClass: Record<string, string> = {
-    queued: "status-pending",
-    running: "status-pending",
-    done: "status-active",
-    failed: "status-error",
+    queued: "status-pending", running: "status-pending", done: "status-active", failed: "status-error",
   };
 
   return (
@@ -98,16 +47,9 @@ function JobRow({ job }: { job: any }) {
         </span>
       </td>
       <td className="text-xs text-muted-foreground">
-        {new Date(job.created_at).toLocaleString("de-DE", {
-          hour: "2-digit",
-          minute: "2-digit",
-          day: "2-digit",
-          month: "2-digit",
-        })}
+        {new Date(job.created_at).toLocaleString("de-DE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
       </td>
-      <td className="text-xs text-destructive max-w-[200px] truncate">
-        {job.error || "—"}
-      </td>
+      <td className="text-xs text-destructive max-w-[200px] truncate">{job.error || "—"}</td>
     </tr>
   );
 }
@@ -115,17 +57,11 @@ function JobRow({ job }: { job: any }) {
 export default function AutopilotPage() {
   const { sellerId } = useAuth();
   const queryClient = useQueryClient();
-  const [apiKey, setApiKey] = useState("");
 
-  // Autopilot active state from seller settings
   const { data: sellerData } = useQuery({
     queryKey: ["seller-settings", sellerId],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("sellers")
-        .select("pricing_settings")
-        .eq("id", sellerId!)
-        .maybeSingle();
+      const { data } = await supabase.from("sellers").select("pricing_settings").eq("id", sellerId!).maybeSingle();
       return data?.pricing_settings as any;
     },
     enabled: !!sellerId,
@@ -135,82 +71,44 @@ export default function AutopilotPage() {
 
   const toggleAutopilot = useMutation({
     mutationFn: async (active: boolean) => {
-      const { data: current } = await supabase
-        .from("sellers")
-        .select("pricing_settings")
-        .eq("id", sellerId!)
-        .maybeSingle();
-
+      const { data: current } = await supabase.from("sellers").select("pricing_settings").eq("id", sellerId!).maybeSingle();
       const settings = (current?.pricing_settings as any) || {};
-      const { error } = await supabase
-        .from("sellers")
-        .update({
-          pricing_settings: {
-            ...settings,
-            autopilot_active: active,
-            autopilot_interval_min: 5,
-            autopilot_workflows: ["order_sync", "fulfillment", "tracking", "listings", "discovery", "optimize"],
-            ...(active ? { autopilot_started_at: new Date().toISOString() } : {}),
-          },
-        })
-        .eq("id", sellerId!);
+      const { error } = await supabase.from("sellers").update({
+        pricing_settings: {
+          ...settings,
+          autopilot_active: active,
+          autopilot_interval_min: 5,
+          autopilot_workflows: ["order_sync", "fulfillment", "tracking", "listings", "discovery", "optimize"],
+          ...(active ? { autopilot_started_at: new Date().toISOString() } : {}),
+        },
+      }).eq("id", sellerId!);
       if (error) throw error;
       return active;
     },
     onSuccess: (active) => {
       toast.success(active ? "Autopilot aktiviert" : "Autopilot deaktiviert", {
-        description: active
-          ? "Alle Workflows laufen automatisch alle 5 Minuten"
-          : "Automatische Ausführung gestoppt",
+        description: active ? "Alle Workflows laufen automatisch alle 5 Minuten" : "Automatische Ausführung gestoppt",
       });
       queryClient.invalidateQueries({ queryKey: ["seller-settings"] });
     },
     onError: (err: Error) => toast.error("Fehler", { description: err.message }),
   });
 
-  // Fetch autopilot status via Supabase directly (no API key needed for dashboard)
-  const { data: status, isLoading } = useQuery({
+  const { data: status } = useQuery({
     queryKey: ["autopilot-status", sellerId],
     queryFn: async () => {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
       const todayISO = todayStart.toISOString();
 
-      const [awaiting, fulfilledToday, listingsToday, recentJobs, totalListings, totalOrders] =
-        await Promise.all([
-          supabase
-            .from("orders")
-            .select("id", { count: "exact", head: true })
-            .eq("seller_id", sellerId!)
-            .eq("needs_fulfillment", true)
-            .in("order_status", ["pending", "processing"]),
-          supabase
-            .from("orders")
-            .select("id", { count: "exact", head: true })
-            .eq("seller_id", sellerId!)
-            .eq("order_status", "shipped")
-            .gte("updated_at", todayISO),
-          supabase
-            .from("ebay_offers")
-            .select("id", { count: "exact", head: true })
-            .eq("seller_id", sellerId!)
-            .gte("created_at", todayISO),
-          supabase
-            .from("jobs")
-            .select("id, type, state, error, created_at, updated_at")
-            .eq("seller_id", sellerId!)
-            .order("created_at", { ascending: false })
-            .limit(20),
-          supabase
-            .from("ebay_offers")
-            .select("id", { count: "exact", head: true })
-            .eq("seller_id", sellerId!)
-            .in("state", ["published", "active"]),
-          supabase
-            .from("orders")
-            .select("id", { count: "exact", head: true })
-            .eq("seller_id", sellerId!),
-        ]);
+      const [awaiting, fulfilledToday, listingsToday, recentJobs, totalListings, totalOrders] = await Promise.all([
+        supabase.from("orders").select("id", { count: "exact", head: true }).eq("seller_id", sellerId!).eq("needs_fulfillment", true).in("order_status", ["pending", "processing"]),
+        supabase.from("orders").select("id", { count: "exact", head: true }).eq("seller_id", sellerId!).eq("order_status", "shipped").gte("updated_at", todayISO),
+        supabase.from("ebay_offers").select("id", { count: "exact", head: true }).eq("seller_id", sellerId!).gte("created_at", todayISO),
+        supabase.from("jobs").select("id, type, state, error, created_at, updated_at").eq("seller_id", sellerId!).order("created_at", { ascending: false }).limit(20),
+        supabase.from("ebay_offers").select("id", { count: "exact", head: true }).eq("seller_id", sellerId!).in("state", ["published", "active"]),
+        supabase.from("orders").select("id", { count: "exact", head: true }).eq("seller_id", sellerId!),
+      ]);
 
       return {
         ordersAwaitingFulfillment: awaiting.count || 0,
@@ -225,41 +123,31 @@ export default function AutopilotPage() {
     refetchInterval: 15000,
   });
 
-  // Load API key from localStorage
-  useState(() => {
-    const saved = localStorage.getItem("autopilot_api_key");
-    if (saved) setApiKey(saved);
-  });
-
-  const saveApiKey = (key: string) => {
-    setApiKey(key);
-    localStorage.setItem("autopilot_api_key", key);
-  };
-
-  const runAutopilot = useMutation({
+  // Run workflows by queuing a job directly (no API key needed)
+  const runWorkflow = useMutation({
     mutationFn: async (workflows?: string[]) => {
-      if (!apiKey) throw new Error("API Key benötigt");
-      return callApi("/v1/autopilot/run", "POST", apiKey, {
-        workflows: workflows || ["order_sync", "fulfillment", "tracking", "listings", "discovery", "optimize"],
+      if (!sellerId) throw new Error("Nicht eingeloggt");
+      const { error } = await supabase.from("jobs").insert({
+        seller_id: sellerId,
+        type: "autopilot_cycle",
+        input: {
+          workflows: workflows || ["order_sync", "fulfillment", "tracking", "listings", "discovery", "optimize"],
+          manual: true,
+        },
+        state: "queued",
       });
+      if (error) throw error;
+      await supabase.functions.invoke("job-worker");
     },
-    onSuccess: (data) => {
-      toast.success("Autopilot durchgelaufen", {
-        description: `Workflows: ${Object.keys(data.autopilot?.workflows || {}).join(", ")}`,
-      });
+    onSuccess: () => {
+      toast.success("Workflow gestartet", { description: "Job wurde in die Warteschlange gestellt" });
       queryClient.invalidateQueries({ queryKey: ["autopilot-status"] });
     },
-    onError: (err: Error) => {
-      toast.error("Autopilot Fehler", { description: err.message });
-    },
+    onError: (err: Error) => toast.error("Fehler", { description: err.message }),
   });
 
-  const runningJobs = (status?.recentJobs || []).filter(
-    (j: any) => j.state === "running" || j.state === "queued"
-  ).length;
-  const failedJobs = (status?.recentJobs || []).filter(
-    (j: any) => j.state === "failed"
-  ).length;
+  const runningJobs = (status?.recentJobs || []).filter((j: any) => j.state === "running" || j.state === "queued").length;
+  const failedJobs = (status?.recentJobs || []).filter((j: any) => j.state === "failed").length;
 
   return (
     <DashboardLayout>
@@ -267,23 +155,13 @@ export default function AutopilotPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-[28px] font-bold text-foreground tracking-tight flex items-center gap-3">
-              <Zap className="w-7 h-7 text-primary" />
-              Autopilot
+              <Zap className="w-7 h-7 text-primary" /> Autopilot
             </h1>
-            <p className="text-[15px] text-muted-foreground mt-1">
-              Vollautomatische Steuerung deines eBay Dropshipping Stores
-            </p>
+            <p className="text-[15px] text-muted-foreground mt-1">Vollautomatische Steuerung deines eBay Dropshipping Stores</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => queryClient.invalidateQueries({ queryKey: ["autopilot-status"] })}
-            >
-              <RefreshCw className="w-4 h-4 mr-1.5" />
-              Refresh
-            </Button>
-          </div>
+          <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ["autopilot-status"] })}>
+            <RefreshCw className="w-4 h-4 mr-1.5" /> Refresh
+          </Button>
         </div>
 
         {/* Autopilot Toggle */}
@@ -294,78 +172,30 @@ export default function AutopilotPage() {
                 <Power className={`w-5 h-5 ${autopilotActive ? "text-success" : "text-muted-foreground"}`} />
               </div>
               <div>
-                <p className="text-[15px] font-semibold text-foreground">
-                  Autopilot {autopilotActive ? "Aktiv" : "Inaktiv"}
-                </p>
+                <p className="text-[15px] font-semibold text-foreground">Autopilot {autopilotActive ? "Aktiv" : "Inaktiv"}</p>
                 <p className="text-[13px] text-muted-foreground">
-                  {autopilotActive
-                    ? "Alle Workflows laufen automatisch alle 5 Minuten"
-                    : "Aktivieren für kontinuierliche Automatisierung"}
+                  {autopilotActive ? "Alle Workflows laufen automatisch alle 5 Minuten" : "Aktivieren für kontinuierliche Automatisierung"}
                 </p>
               </div>
             </div>
-            <Switch
-              checked={autopilotActive}
-              onCheckedChange={(checked) => toggleAutopilot.mutate(checked)}
-              disabled={toggleAutopilot.isPending}
-            />
+            <Switch checked={autopilotActive} onCheckedChange={(checked) => toggleAutopilot.mutate(checked)} disabled={toggleAutopilot.isPending} />
           </div>
         </div>
 
-        {/* API Key Input */}
-        <div className="glass-card p-5">
-          <label className="text-[13px] font-medium text-muted-foreground block mb-2">
-            API Key für Autopilot
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => saveApiKey(e.target.value)}
-              placeholder="API Key eingeben..."
-              className="flex-1 px-3 py-2 rounded-xl bg-muted border border-border text-sm font-mono"
-            />
-            <Button
-              onClick={() => runAutopilot.mutate(undefined)}
-              disabled={!apiKey || runAutopilot.isPending}
-              className="gap-1.5"
-            >
-              {runAutopilot.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Play className="w-4 h-4" />
-              )}
-              Alle Workflows starten
-            </Button>
-          </div>
+        {/* Manual Run */}
+        <div className="flex justify-end">
+          <Button onClick={() => runWorkflow.mutate(undefined)} disabled={runWorkflow.isPending} className="gap-1.5">
+            {runWorkflow.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            Alle Workflows starten
+          </Button>
         </div>
 
-        {/* Stats Grid */}
+        {/* Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            label="Awaiting Fulfillment"
-            value={status?.ordersAwaitingFulfillment ?? "—"}
-            icon={ShoppingCart}
-            color="bg-warning/10 text-warning"
-          />
-          <StatCard
-            label="Fulfilled Heute"
-            value={status?.ordersFulfilledToday ?? "—"}
-            icon={Truck}
-            color="bg-success/10 text-success"
-          />
-          <StatCard
-            label="Listings Heute"
-            value={status?.listingsCreatedToday ?? "—"}
-            icon={Package}
-            color="bg-primary/10 text-primary"
-          />
-          <StatCard
-            label="Aktive Listings"
-            value={status?.totalActiveListings ?? "—"}
-            icon={Activity}
-            color="bg-muted text-muted-foreground"
-          />
+          <StatCard label="Awaiting Fulfillment" value={status?.ordersAwaitingFulfillment ?? "—"} icon={ShoppingCart} color="bg-warning/10 text-warning" />
+          <StatCard label="Fulfilled Heute" value={status?.ordersFulfilledToday ?? "—"} icon={Truck} color="bg-success/10 text-success" />
+          <StatCard label="Listings Heute" value={status?.listingsCreatedToday ?? "—"} icon={Package} color="bg-primary/10 text-primary" />
+          <StatCard label="Aktive Listings" value={status?.totalActiveListings ?? "—"} icon={Activity} color="bg-muted text-muted-foreground" />
         </div>
 
         {/* Workflow Quick Actions */}
@@ -380,8 +210,8 @@ export default function AutopilotPage() {
           ].map((wf) => (
             <button
               key={wf.id}
-              onClick={() => runAutopilot.mutate([wf.id])}
-              disabled={!apiKey || runAutopilot.isPending}
+              onClick={() => runWorkflow.mutate([wf.id])}
+              disabled={runWorkflow.isPending}
               className="glass-card p-5 text-left hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 disabled:opacity-50 group"
             >
               <div className="flex items-center gap-3 mb-2">
@@ -397,14 +227,10 @@ export default function AutopilotPage() {
 
         {/* System Status */}
         <div className="glass-card p-5 flex items-center gap-4">
-          <div className="p-3 rounded-xl bg-success/10">
-            <Activity className="w-5 h-5 text-success" />
-          </div>
+          <div className="p-3 rounded-xl bg-success/10"><Activity className="w-5 h-5 text-success" /></div>
           <div className="flex-1">
             <p className="text-[15px] font-semibold text-foreground">System Status</p>
-            <p className="text-[13px] text-success font-mono mt-0.5">
-              Online · {status?.totalActiveListings ?? 0} Listings · {status?.totalOrders ?? 0} Orders
-            </p>
+            <p className="text-[13px] text-success font-mono mt-0.5">Online · {status?.totalActiveListings ?? 0} Listings · {status?.totalOrders ?? 0} Orders</p>
           </div>
           <div className="flex items-center gap-4 text-sm">
             <div className="flex items-center gap-1.5">
@@ -426,20 +252,11 @@ export default function AutopilotPage() {
             <h2 className="text-[15px] font-semibold text-foreground">Letzte Jobs</h2>
           </div>
           {(status?.recentJobs || []).length === 0 ? (
-            <div className="py-12 text-center text-[14px] text-muted-foreground">
-              Noch keine Jobs vorhanden.
-            </div>
+            <div className="py-12 text-center text-[14px] text-muted-foreground">Noch keine Jobs vorhanden.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Typ</th>
-                    <th>Status</th>
-                    <th>Erstellt</th>
-                    <th>Fehler</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>Typ</th><th>Status</th><th>Erstellt</th><th>Fehler</th></tr></thead>
                 <tbody>
                   {(status?.recentJobs || []).map((job: any) => (
                     <JobRow key={job.id} job={job} />
