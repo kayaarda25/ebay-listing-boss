@@ -17,10 +17,12 @@ import {
   Activity,
   Search,
   TrendingUp,
+  Power,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 
 const PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID;
 
@@ -114,6 +116,57 @@ export default function AutopilotPage() {
   const { sellerId } = useAuth();
   const queryClient = useQueryClient();
   const [apiKey, setApiKey] = useState("");
+
+  // Autopilot active state from seller settings
+  const { data: sellerData } = useQuery({
+    queryKey: ["seller-settings", sellerId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("sellers")
+        .select("pricing_settings")
+        .eq("id", sellerId!)
+        .maybeSingle();
+      return data?.pricing_settings as any;
+    },
+    enabled: !!sellerId,
+  });
+
+  const autopilotActive = sellerData?.autopilot_active || false;
+
+  const toggleAutopilot = useMutation({
+    mutationFn: async (active: boolean) => {
+      const { data: current } = await supabase
+        .from("sellers")
+        .select("pricing_settings")
+        .eq("id", sellerId!)
+        .maybeSingle();
+
+      const settings = (current?.pricing_settings as any) || {};
+      const { error } = await supabase
+        .from("sellers")
+        .update({
+          pricing_settings: {
+            ...settings,
+            autopilot_active: active,
+            autopilot_interval_min: 5,
+            autopilot_workflows: ["order_sync", "fulfillment", "tracking", "listings", "discovery", "optimize"],
+            ...(active ? { autopilot_started_at: new Date().toISOString() } : {}),
+          },
+        })
+        .eq("id", sellerId!);
+      if (error) throw error;
+      return active;
+    },
+    onSuccess: (active) => {
+      toast.success(active ? "Autopilot aktiviert" : "Autopilot deaktiviert", {
+        description: active
+          ? "Alle Workflows laufen automatisch alle 5 Minuten"
+          : "Automatische Ausführung gestoppt",
+      });
+      queryClient.invalidateQueries({ queryKey: ["seller-settings"] });
+    },
+    onError: (err: Error) => toast.error("Fehler", { description: err.message }),
+  });
 
   // Fetch autopilot status via Supabase directly (no API key needed for dashboard)
   const { data: status, isLoading } = useQuery({
@@ -230,6 +283,32 @@ export default function AutopilotPage() {
               <RefreshCw className="w-4 h-4 mr-1.5" />
               Refresh
             </Button>
+          </div>
+        </div>
+
+        {/* Autopilot Toggle */}
+        <div className={`glass-card p-5 border-2 transition-colors ${autopilotActive ? "border-success/50 bg-success/5" : "border-border"}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`p-2.5 rounded-xl ${autopilotActive ? "bg-success/20" : "bg-muted"}`}>
+                <Power className={`w-5 h-5 ${autopilotActive ? "text-success" : "text-muted-foreground"}`} />
+              </div>
+              <div>
+                <p className="text-[15px] font-semibold text-foreground">
+                  Autopilot {autopilotActive ? "Aktiv" : "Inaktiv"}
+                </p>
+                <p className="text-[13px] text-muted-foreground">
+                  {autopilotActive
+                    ? "Alle Workflows laufen automatisch alle 5 Minuten"
+                    : "Aktivieren für kontinuierliche Automatisierung"}
+                </p>
+              </div>
+            </div>
+            <Switch
+              checked={autopilotActive}
+              onCheckedChange={(checked) => toggleAutopilot.mutate(checked)}
+              disabled={toggleAutopilot.isPending}
+            />
           </div>
         </div>
 
