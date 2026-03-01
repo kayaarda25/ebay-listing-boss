@@ -71,8 +71,12 @@ Deno.serve(async (req) => {
         // AddFixedPriceItem – create new listing
         const title = (product?.title || offer.sku).substring(0, 80);
         const description = product?.description || title;
-        const images = (product?.images_json as string[]) || [];
-        const pictureUrls = images.map(url => `<PictureURL>${url}</PictureURL>`).join("\n");
+        const rawImages = (product?.images_json as string[]) || [];
+        // Filter invalid URLs and limit to 12 (eBay max)
+        const images = rawImages
+          .filter(url => url && typeof url === 'string' && url.startsWith('http'))
+          .slice(0, 12);
+        const pictureUrls = images.map(url => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
 
         const xml = await ebayTradingCall({
           callName: "AddFixedPriceItem",
