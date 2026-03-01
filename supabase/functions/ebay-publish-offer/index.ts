@@ -266,11 +266,24 @@ async function publishAuctionListing(params: PublishAuctionListingParams): Promi
   }
 }
 
+/** Verify listing – always includes ConditionID to avoid spurious errors */
 async function verifyAuctionListing(params: PublishAuctionListingParams): Promise<string> {
   return ebayTradingCall({
     callName: "VerifyAddItem",
-    body: buildAuctionItemBody(params),
+    body: buildAuctionItemBody({ ...params, conditionId: params.conditionId || "1000" }),
   });
+}
+
+/** Check if an eBay error is specifically about the category being invalid */
+function isCategoryError(message: string): boolean {
+  const categoryPatterns = [
+    "Unterkategorie",
+    "Kategorie ist nicht gültig",
+    "Ungültige Kategorie",
+    "nicht um eine so genannte Unterkategorie",
+    "nicht gültig. Bitte wählen Sie eine andere Kategorie",
+  ];
+  return categoryPatterns.some(p => message.includes(p));
 }
 
 async function findLeafCategoryFromParent(parentCategoryId: string): Promise<string | null> {
@@ -339,79 +352,53 @@ async function resolveValidCategoryId({
   pictureUrls,
   itemSpecifics,
 }: ResolveCategoryParams): Promise<string | null> {
-  const candidates = [preferredCategoryId, "175673", suggestCategoryId(title)]
+  // Build candidate list: preferred → keyword-suggested → known-good leaf categories
+  const suggested = suggestCategoryId(title);
+  const candidates = [preferredCategoryId, suggested, "175673", "20710", "1281", "26395"]
     .filter((v): v is string => Boolean(v));
-
   const uniqueCandidates = [...new Set(candidates)];
+
+  console.log(`Category resolution for "${title}" – candidates: ${uniqueCandidates.join(", ")}`);
 
   for (const candidateCategoryId of uniqueCandidates) {
     try {
       await verifyAuctionListing({
-        title,
-        description,
-        categoryId: candidateCategoryId,
-        price,
-        sku,
-        pictureUrls,
-        itemSpecifics,
+        title, description, categoryId: candidateCategoryId, price, sku, pictureUrls, itemSpecifics,
       });
+      console.log(`Category ${candidateCategoryId} verified OK`);
       return candidateCategoryId;
     } catch (error) {
       const message = String(error);
 
+      // Only reject if the error is specifically about the category
+      if (!isCategoryError(message)) {
+        // Non-category error (photos, condition, payment hold, etc.) → category is valid
+        console.log(`Category ${candidateCategoryId} accepted (non-category errors ignored)`);
+        return candidateCategoryId;
+      }
+
+      console.warn(`Category ${candidateCategoryId} rejected (category error), trying leaf lookup...`);
+
+      // Try finding a leaf child
       if (message.includes("Unterkategorie")) {
         const leafCategoryId = await findLeafCategoryFromParent(candidateCategoryId);
-        if (!leafCategoryId) continue;
-
-        try {
-          await verifyAuctionListing({
-            title,
-            description,
-            categoryId: leafCategoryId,
-            price,
-            sku,
-            pictureUrls,
-            itemSpecifics,
-          });
-          return leafCategoryId;
-        } catch (leafError) {
-          const leafMessage = String(leafError);
-          if (leafMessage.includes("Kategorie ist nicht gültig") || leafMessage.includes("Unterkategorie")) {
-            continue;
-          }
-          return leafCategoryId;
+        if (leafCategoryId) {
+          console.log(`Found leaf category ${leafCategoryId} from parent ${candidateCategoryId}`);
+          return leafCategoryId; // Accept without re-verifying – leaf from eBay is valid
         }
       }
-
-      if (message.includes("Kategorie ist nicht gültig")) {
-        console.warn(`Category ${candidateCategoryId} invalid, trying next`);
-        continue;
-      }
-
-      // Category likely valid; proceed with this one and let AddItem return concrete validation errors if any.
-      return candidateCategoryId;
     }
   }
 
+  // Last resort: try findAnyLeafCategoryId
+  console.warn("All candidates failed, trying global leaf lookup...");
   const fallbackLeafCategoryId = await findAnyLeafCategoryId();
-  if (!fallbackLeafCategoryId) {
-    return null;
+  if (fallbackLeafCategoryId) {
+    console.log(`Using global fallback leaf category: ${fallbackLeafCategoryId}`);
+    return fallbackLeafCategoryId;
   }
 
-  try {
-    await verifyAuctionListing({
-      title,
-      description,
-      categoryId: fallbackLeafCategoryId,
-      price,
-      sku,
-      pictureUrls,
-      itemSpecifics,
-    });
-    return fallbackLeafCategoryId;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 /** Keyword-based category mapping for eBay.de leaf categories.
