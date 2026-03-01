@@ -45,6 +45,18 @@ interface DiscoveredProduct {
   score: number;
 }
 
+// Rate limiter: CJ API allows 1 request per second
+let lastCJCallTime = 0;
+async function rateLimitedCJFetch(url: string | URL, options?: RequestInit): Promise<Response> {
+  const now = Date.now();
+  const elapsed = now - lastCJCallTime;
+  if (elapsed < 1100) {
+    await new Promise(r => setTimeout(r, 1100 - elapsed));
+  }
+  lastCJCallTime = Date.now();
+  return fetch(url.toString(), options);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -84,14 +96,14 @@ Deno.serve(async (req) => {
 
     // Pick random queries to search
     const shuffled = [...queries].sort(() => Math.random() - 0.5);
-    const searchQueries = shuffled.slice(0, Math.min(5, shuffled.length));
+    const searchQueries = shuffled.slice(0, Math.min(3, shuffled.length));
 
     for (const query of searchQueries) {
       if (discovered.length >= maxProducts) break;
 
       try {
         // Search CJ with EU country filter
-        for (const country of ["DE", "PL", "CZ"]) {
+        for (const country of ["DE", "PL"]) {
           if (discovered.length >= maxProducts) break;
 
           const searchUrl = new URL(`${CJ_BASE}/product/list`);
@@ -100,7 +112,7 @@ Deno.serve(async (req) => {
           searchUrl.searchParams.set("pageSize", "20");
           searchUrl.searchParams.set("countryCode", country);
 
-          const res = await fetch(searchUrl.toString(), {
+          const res = await rateLimitedCJFetch(searchUrl.toString(), {
             headers: { "CJ-Access-Token": token },
           });
           const data = await res.json();
@@ -115,7 +127,10 @@ Deno.serve(async (req) => {
           for (const p of products) {
             if (discovered.length >= maxProducts) break;
 
-            const price = p.sellPrice || p.productPrice || 0;
+            const rawPrice = p.sellPrice || p.productPrice || 0;
+            // Handle price ranges like "125.29 -- 139.85" by taking the lower value
+            const price = typeof rawPrice === "string" ? parseFloat(rawPrice) : rawPrice;
+            if (isNaN(price)) continue;
             console.log(`Product: ${p.productNameEn?.substring(0, 40)} price=${price} status=${p.productStatus} images=${p.productImageSet?.length || 0}`);
 
             // Apply filters
@@ -130,7 +145,7 @@ Deno.serve(async (req) => {
 
             // Verify product is still available via detail API
             try {
-              const detailRes = await fetch(`${CJ_BASE}/product/query?pid=${p.pid}`, {
+              const detailRes = await rateLimitedCJFetch(`${CJ_BASE}/product/query?pid=${p.pid}`, {
                 headers: { "CJ-Access-Token": token },
               });
               const detailData = await detailRes.json();
@@ -163,7 +178,7 @@ Deno.serve(async (req) => {
             let shippingCost = 3.0; // default estimate
             try {
               if (p.variants?.[0]?.vid) {
-                const freightRes = await fetch(`${CJ_BASE}/logistic/freightCalculate`, {
+                const freightRes = await rateLimitedCJFetch(`${CJ_BASE}/logistic/freightCalculate`, {
                   method: "POST",
                   headers: { "CJ-Access-Token": token, "Content-Type": "application/json" },
                   body: JSON.stringify({
@@ -202,8 +217,7 @@ Deno.serve(async (req) => {
               score,
             });
 
-            // Rate limit protection
-            await new Promise(r => setTimeout(r, 200));
+            // Rate limiting handled by rateLimitedCJFetch
           }
         }
       } catch (err) {
