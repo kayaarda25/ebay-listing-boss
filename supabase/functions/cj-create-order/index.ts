@@ -134,16 +134,38 @@ Deno.serve(async (req) => {
     }
 
     const address = buyer.address;
+    
+    // Map common country names to ISO 2-letter codes
+    const countryNameToCode: Record<string, string> = {
+      "germany": "DE", "deutschland": "DE", "france": "FR", "frankreich": "FR",
+      "austria": "AT", "österreich": "AT", "switzerland": "CH", "schweiz": "CH",
+      "netherlands": "NL", "niederlande": "NL", "belgium": "BE", "belgien": "BE",
+      "italy": "IT", "italien": "IT", "spain": "ES", "spanien": "ES",
+      "poland": "PL", "polen": "PL", "united kingdom": "GB", "großbritannien": "GB",
+      "united states": "US", "usa": "US", "china": "CN", "czech republic": "CZ",
+      "denmark": "DK", "sweden": "SE", "norway": "NO", "finland": "FI",
+      "portugal": "PT", "ireland": "IE", "luxembourg": "LU", "greece": "GR",
+    };
+    
+    let countryCode = "DE"; // default
+    const rawCountry = (address.country || "").trim();
+    if (rawCountry.length === 2) {
+      countryCode = rawCountry.toUpperCase();
+    } else if (rawCountry.length > 0) {
+      countryCode = countryNameToCode[rawCountry.toLowerCase()] || "DE";
+    }
+    
     const cjOrderPayload = {
       orderNumber: order.order_id,
       shippingZip: address.postalCode || "",
-      shippingCountryCode: address.country?.length === 2 ? address.country : "DE",
-      shippingCountry: address.country || "Germany",
-      shippingProvince: address.city || "",
+      shippingCountryCode: countryCode,
+      shippingCountry: rawCountry || "Germany",
+      shippingProvince: address.state || address.city || "",
       shippingCity: address.city || "",
       shippingAddress: [address.street1, address.street2].filter(Boolean).join(", "),
       shippingCustomerName: buyer.name || "",
-      shippingPhone: address.phone || "",
+      shippingPhone: address.phone || "0000000000",
+      fromCountryCode: "CN",
       remark: `eBay Order ${order.order_id}`,
       products: orderProducts,
     };
