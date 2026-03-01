@@ -176,7 +176,7 @@ const OrdersPage = () => {
             />
           </div>
           <div className="flex items-center gap-1 bg-card border border-border/60 rounded-xl p-1">
-            {["all", "pending", "shipped", "delivered", "cancelled"].map((s) => (
+            {["all", "pending", "processing", "shipped", "delivered", "cancelled"].map((s) => (
               <button
                 key={s}
                 onClick={() => setStatusFilter(s)}
