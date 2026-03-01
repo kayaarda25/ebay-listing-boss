@@ -68,24 +68,27 @@ Deno.serve(async (req) => {
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       } else {
-        // AddFixedPriceItem – create new listing
+        // AddItem – create new listing (use AddItem for accounts without FixedPrice privileges)
         const title = (product?.title || offer.sku).substring(0, 80);
         const description = product?.description || title;
         const rawImages = (product?.images_json as string[]) || [];
-        // Filter invalid URLs and limit to 12 (eBay max)
         const images = rawImages
           .filter(url => url && typeof url === 'string' && url.startsWith('http'))
           .slice(0, 12);
         const pictureUrls = images.map(url => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
+
+        // Use a safe leaf category: 176984 = "Sonstige" under Haustierbedarf
+        // If offer has a specific category, use that instead
+        const categoryId = offer.category_id || "177";
 
         const xml = await ebayTradingCall({
           callName: "AddFixedPriceItem",
           body: `
             <Item>
               <Title>${escapeXml(title)}</Title>
-              <Description>${escapeXml(description)}</Description>
+              <Description><![CDATA[${description}]]></Description>
               <PrimaryCategory>
-                <CategoryID>${offer.category_id || "175673"}</CategoryID>
+                <CategoryID>${categoryId}</CategoryID>
               </PrimaryCategory>
               <StartPrice currencyID="EUR">${offer.price || 0}</StartPrice>
               <Quantity>${offer.quantity || 1}</Quantity>
@@ -93,12 +96,27 @@ Deno.serve(async (req) => {
               <ListingType>FixedPriceItem</ListingType>
               <Country>DE</Country>
               <Currency>EUR</Currency>
+              <Location>Deutschland</Location>
               <ConditionID>1000</ConditionID>
               <SKU>${escapeXml(offer.sku)}</SKU>
               <PictureDetails>
                 ${pictureUrls}
               </PictureDetails>
               <DispatchTimeMax>3</DispatchTimeMax>
+              <ShippingDetails>
+                <ShippingType>Flat</ShippingType>
+                <ShippingServiceOptions>
+                  <ShippingServicePriority>1</ShippingServicePriority>
+                  <ShippingService>DE_DHLPaket</ShippingService>
+                  <ShippingServiceCost currencyID="EUR">0.00</ShippingServiceCost>
+                  <FreeShipping>true</FreeShipping>
+                </ShippingServiceOptions>
+              </ShippingDetails>
+              <ReturnPolicy>
+                <ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>
+                <ReturnsWithinOption>Days_30</ReturnsWithinOption>
+                <ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>
+              </ReturnPolicy>
             </Item>
           `,
         });
