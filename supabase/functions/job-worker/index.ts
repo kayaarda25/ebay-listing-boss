@@ -261,21 +261,70 @@ async function processOrderFulfill(supabase: any, job: any): Promise<any> {
   const buyer = order.buyer_json as any;
   if (buyer?.cj_order_id) return { message: "Already fulfilled", cjOrderId: buyer.cj_order_id };
 
-  // Look up SKU mappings
-  const skus = (order.order_items || []).map((i: any) => i.sku).filter(Boolean);
-  const { data: skuMaps } = await supabase
-    .from("sku_map").select("*").eq("seller_id", job.seller_id).in("ebay_sku", skus).eq("active", true);
+  // Collect SKUs from order items AND buyer_json items
+  const orderItemSkus = (order.order_items || []).map((i: any) => i.sku).filter(Boolean);
+  const buyerItems = buyer?.items || [];
+  const buyerSkus = buyerItems.map((i: any) => i.sku).filter(Boolean);
+  const allSkus = [...new Set([...orderItemSkus, ...buyerSkus])];
 
-  if (!skuMaps || skuMaps.length === 0) {
-    throw new Error(`No SKU mappings found for SKUs: ${skus.join(", ")}. Create them via POST /v1/sku-map first.`);
+  // Path 1: Direct SKU map lookup
+  let skuMaps: any[] = [];
+  if (allSkus.length > 0) {
+    const { data } = await supabase
+      .from("sku_map").select("*").eq("seller_id", job.seller_id).in("ebay_sku", allSkus).eq("active", true);
+    if (data) skuMaps = data;
+  }
+
+  // Path 2: If no direct match, resolve via ebay_inventory_items → source_products → variants
+  if (skuMaps.length === 0 && allSkus.length > 0) {
+    console.log("No direct SKU map match, trying inventory item → source product path for SKUs:", allSkus);
+    
+    const { data: invItems } = await supabase
+      .from("ebay_inventory_items")
+      .select("sku, source_product_id")
+      .eq("seller_id", job.seller_id)
+      .in("sku", allSkus)
+      .not("source_product_id", "is", null);
+
+    if (invItems && invItems.length > 0) {
+      const spIds = invItems.map((i: any) => i.source_product_id).filter(Boolean);
+      const { data: sourceProds } = await supabase
+        .from("source_products")
+        .select("id, source_id, variants_json, source_type")
+        .eq("seller_id", job.seller_id)
+        .eq("source_type", "cjdropshipping")
+        .in("id", spIds);
+
+      if (sourceProds && sourceProds.length > 0) {
+        // Build synthetic sku_map entries from source product variants
+        for (const sp of sourceProds) {
+          const variants = (sp.variants_json || []) as any[];
+          const firstVariant = variants[0];
+          const vid = firstVariant?.vid || sp.source_id;
+          // Find which order SKU maps to this source product
+          const linkedInvItem = invItems.find((i: any) => i.source_product_id === sp.id);
+          skuMaps.push({
+            ebay_sku: linkedInvItem?.sku || "",
+            cj_variant_id: vid,
+            default_qty: 1,
+          });
+        }
+        console.log("Resolved CJ variants via source products:", skuMaps.map((m: any) => m.cj_variant_id));
+      }
+    }
+  }
+
+  if (skuMaps.length === 0) {
+    throw new Error(`No SKU mappings found for SKUs: ${allSkus.join(", ")}. Link products or create SKU mappings.`);
   }
 
   const address = buyer?.address || {};
   const token = await getCJAccessToken();
 
   const products = skuMaps.map((m: any) => {
-    const orderItem = order.order_items.find((i: any) => i.sku === m.ebay_sku);
-    return { vid: m.cj_variant_id, quantity: orderItem?.quantity || m.default_qty };
+    const orderItem = (order.order_items || []).find((i: any) => i.sku === m.ebay_sku) 
+      || buyerItems.find((i: any) => i.sku === m.ebay_sku);
+    return { vid: m.cj_variant_id, quantity: orderItem?.quantity || orderItem?.qty || m.default_qty || 1 };
   });
 
   const cjPayload = {
@@ -572,7 +621,7 @@ async function processAutopilotCycle(supabase: any, job: any): Promise<any> {
         .select("id, order_id")
         .eq("seller_id", sellerId)
         .eq("needs_fulfillment", true)
-        .in("order_status", ["pending", "processing"])
+        .in("order_status", ["pending", "processing", "completed"])
         .limit(10);
 
       let fulfilled = 0;
@@ -581,8 +630,9 @@ async function processAutopilotCycle(supabase: any, job: any): Promise<any> {
           await processOrderFulfill(supabase, { ...job, input: { orderId: order.id } });
           fulfilled++;
           reportDetails.push({ icon: "fulfillment", text: `Order ${order.order_id} fulfilled` });
-        } catch {
-          // Silently skip orders without SKU mappings
+        } catch (fulfillErr) {
+          console.error(`Fulfillment failed for ${order.order_id}:`, String(fulfillErr));
+          reportDetails.push({ icon: "error", text: `Fulfillment ${order.order_id}: ${String(fulfillErr).substring(0, 80)}` });
         }
       }
       stats.fulfilled = fulfilled;
