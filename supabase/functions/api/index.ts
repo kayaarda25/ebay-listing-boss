@@ -87,6 +87,10 @@ async function routeRequest(ctx: ApiContext, req: Request, path: string): Promis
   if (path === "/v1/autopilot/run" && method === "POST") return handleAutopilotRun(ctx, req);
   if (path === "/v1/autopilot/status" && method === "GET") return handleAutopilotStatus(ctx);
 
+  // === DISCOVERY ===
+  if (path === "/v1/discovery/run" && method === "POST") return handleDiscoveryRun(ctx, req);
+  if (path === "/v1/discovery/status" && method === "GET") return handleDiscoveryStatus(ctx);
+
   return errorResponse("Not found", 404, "NOT_FOUND");
 }
 
@@ -722,7 +726,7 @@ async function handlePatchApiKey(ctx: ApiContext, id: string, req: Request): Pro
 
 async function handleAutopilotRun(ctx: ApiContext, req: Request): Promise<Response> {
   const body = await req.json().catch(() => ({}));
-  const workflows = body.workflows || ["order_sync", "fulfillment", "tracking", "listings"];
+  const workflows = body.workflows || ["order_sync", "fulfillment", "tracking", "listings", "discovery"];
   const listingTarget = body.listingTarget || 100;
   
   const results: any = { startedAt: new Date().toISOString(), workflows: {} };
@@ -835,6 +839,35 @@ async function handleAutopilotRun(ctx: ApiContext, req: Request): Promise<Respon
     }
   }
 
+  // 5. PRODUCT DISCOVERY
+  if (workflows.includes("discovery")) {
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      
+      const res = await fetch(`${supabaseUrl}/functions/v1/product-discovery`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({
+          sellerId: ctx.sellerId,
+          maxProducts: 20,
+        }),
+      });
+      const discData = await res.json();
+      results.workflows.discovery = {
+        status: discData.ok ? "completed" : "error",
+        discovered: discData.discovered || 0,
+        imported: discData.imported || 0,
+        error: discData.error,
+      };
+    } catch (err) {
+      results.workflows.discovery = { status: "error", error: String(err) };
+    }
+  }
+
   results.completedAt = new Date().toISOString();
   return jsonResponse({ ok: true, autopilot: results });
 }
@@ -897,6 +930,129 @@ async function handleAutopilotStatus(ctx: ApiContext): Promise<Response> {
       totalOrders: totalOrdersRes.count || 0,
       recentJobs: recentJobsRes.data || [],
       apiHealth: "online",
+      timestamp: new Date().toISOString(),
+    },
+  });
+}
+
+// ==================== DISCOVERY ====================
+
+async function handleDiscoveryRun(ctx: ApiContext, req: Request): Promise<Response> {
+  const body = await req.json().catch(() => ({}));
+  
+  // Call the product-discovery edge function
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  
+  const res = await fetch(`${supabaseUrl}/functions/v1/product-discovery`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${serviceKey}`,
+    },
+    body: JSON.stringify({
+      sellerId: ctx.sellerId,
+      maxProducts: body.maxProducts || 20,
+      queries: body.queries,
+      skipListing: body.skipListing || false,
+    }),
+  });
+
+  const data = await res.json();
+  return jsonResponse(data, res.status);
+}
+
+async function handleDiscoveryStatus(ctx: ApiContext): Promise<Response> {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayISO = todayStart.toISOString();
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [
+    discoveredTodayRes,
+    euProductsRes,
+    listingsTodayRes,
+    noSalesRes,
+    topProductsRes,
+    totalDiscoveredRes,
+  ] = await Promise.all([
+    // Products discovered today
+    ctx.supabase
+      .from("source_products")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_id", ctx.sellerId)
+      .eq("source_type", "cjdropshipping")
+      .gte("created_at", todayISO),
+    // EU warehouse products
+    ctx.supabase
+      .from("source_products")
+      .select("id, title, price_source, price_ebay, attributes_json, images_json")
+      .eq("seller_id", ctx.sellerId)
+      .eq("source_type", "cjdropshipping")
+      .order("created_at", { ascending: false })
+      .limit(50),
+    // Listings created today
+    ctx.supabase
+      .from("ebay_offers")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_id", ctx.sellerId)
+      .gte("created_at", todayISO),
+    // Products without sales (older than 14 days, no orders)
+    ctx.supabase
+      .from("ebay_offers")
+      .select("id, sku, title, created_at, state")
+      .eq("seller_id", ctx.sellerId)
+      .in("state", ["published", "active"])
+      .lte("created_at", fourteenDaysAgo)
+      .limit(20),
+    // Top products by price (proxy for performance)
+    ctx.supabase
+      .from("source_products")
+      .select("id, title, price_source, price_ebay, attributes_json")
+      .eq("seller_id", ctx.sellerId)
+      .eq("source_type", "cjdropshipping")
+      .not("price_ebay", "is", null)
+      .order("price_ebay", { ascending: false })
+      .limit(10),
+    // Total discovered
+    ctx.supabase
+      .from("source_products")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_id", ctx.sellerId)
+      .eq("source_type", "cjdropshipping"),
+  ]);
+
+  // Filter EU warehouse products
+  const euProducts = (euProductsRes.data || []).filter((p: any) => {
+    const attrs = p.attributes_json as any;
+    return attrs?.warehouse && ["DE", "PL", "ES", "FR", "CZ", "NL", "IT", "BE"].includes(attrs.warehouse);
+  });
+
+  return jsonResponse({
+    ok: true,
+    discovery: {
+      discoveredToday: discoveredTodayRes.count || 0,
+      totalDiscovered: totalDiscoveredRes.count || 0,
+      euWarehouseProducts: euProducts.length,
+      listingsCreatedToday: listingsTodayRes.count || 0,
+      dailyTarget: 100,
+      topProducts: (topProductsRes.data || []).map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        costPrice: p.price_source,
+        sellingPrice: p.price_ebay,
+        margin: p.price_ebay && p.price_source
+          ? Math.round(((p.price_ebay - p.price_source) / p.price_ebay) * 100)
+          : null,
+        warehouse: (p.attributes_json as any)?.warehouse,
+      })),
+      productsWithoutSales: (noSalesRes.data || []).map((p: any) => ({
+        id: p.id,
+        sku: p.sku,
+        title: p.title,
+        createdAt: p.created_at,
+        daysSinceListing: Math.floor((Date.now() - new Date(p.created_at).getTime()) / 86400000),
+      })),
       timestamp: new Date().toISOString(),
     },
   });

@@ -13,6 +13,7 @@ import SettingsPage from "./pages/Settings";
 import AuthPage from "./pages/Auth";
 import ApiDocsPage from "./pages/ApiDocs";
 import AutopilotPage from "./pages/Autopilot";
+import DiscoveryPage from "./pages/Discovery";
 import NotFound from "./pages/NotFound";
 import { ReactNode } from "react";
 
@@ -55,6 +56,7 @@ const App = () => (
               <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
               <Route path="/api-docs" element={<ProtectedRoute><ApiDocsPage /></ProtectedRoute>} />
               <Route path="/autopilot" element={<ProtectedRoute><AutopilotPage /></ProtectedRoute>} />
+              <Route path="/discovery" element={<ProtectedRoute><DiscoveryPage /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </ThemeProvider>

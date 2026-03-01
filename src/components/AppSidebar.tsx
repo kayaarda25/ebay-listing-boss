@@ -13,6 +13,7 @@ import {
   Moon,
   Book,
   Bot,
+  Search,
 } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "@/hooks/useTheme";
@@ -24,6 +25,7 @@ const navItems = [
   { path: "/listings", label: "Listings", icon: Package },
   { path: "/orders", label: "Orders", icon: ShoppingCart },
   { path: "/autopilot", label: "Autopilot", icon: Bot },
+  { path: "/discovery", label: "Discovery", icon: Search },
   { path: "/logs", label: "Logs", icon: ScrollText },
   { path: "/settings", label: "Settings", icon: Settings },
   { path: "/api-docs", label: "API Docs", icon: Book },
