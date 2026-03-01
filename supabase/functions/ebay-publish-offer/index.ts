@@ -77,8 +77,13 @@ Deno.serve(async (req) => {
           .slice(0, 12);
         const pictureUrls = images.map(url => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
 
-        // Default to 20081 = "Sonstige" under "Sammeln & Seltenes" – a valid eBay.de leaf category
-        const categoryId = offer.category_id || "20081";
+        const categoryId = offer.category_id;
+        if (!categoryId) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Keine eBay-Kategorie gesetzt. Bitte zuerst eine Kategorie zuweisen.' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
 
         // Build item specifics from product attributes
         const attributes = (product?.attributes_json as Record<string, string>) || {};
@@ -95,12 +100,11 @@ Deno.serve(async (req) => {
               </PrimaryCategory>
               <StartPrice currencyID="EUR">${offer.price || 0}</StartPrice>
               <Quantity>1</Quantity>
-              <ListingDuration>Days_30</ListingDuration>
+              <ListingDuration>Days_7</ListingDuration>
               <ListingType>Chinese</ListingType>
               <Country>DE</Country>
               <Currency>EUR</Currency>
               <Location>Deutschland</Location>
-              <ConditionID>1000</ConditionID>
               <SKU>${escapeXml(offer.sku)}</SKU>
               <PictureDetails>
                 ${pictureUrls}
