@@ -33,101 +33,104 @@ Deno.serve(async (req) => {
     const items = buyer.items || [];
     if (items.length === 0) throw new Error("No items in order");
 
-    // Look up CJ products through the chain:
-    // order items have SKU → ebay_inventory_items (by sku) → source_product_id → source_products (source_type = 'cjdropshipping')
-    // Also try direct lookup: items may have itemId which links to ebay_offers listing_id
-    
     // Collect all SKUs from order items
     const itemSkus = items.map((i: any) => i.sku).filter(Boolean);
     const itemIds = items.map((i: any) => i.itemId).filter(Boolean);
 
     console.log("Order items SKUs:", itemSkus, "ItemIDs:", itemIds);
 
-    // Try to find linked CJ source products via ebay_inventory_items
-    let cjProducts: any[] = [];
-    
-    // Path 1: via ebay_inventory_items SKU → source_product
-    if (itemSkus.length > 0) {
-      const { data: invItems } = await supabase
-        .from("ebay_inventory_items")
-        .select("sku, source_product_id")
-        .eq("seller_id", sellerId)
-        .in("sku", itemSkus)
-        .not("source_product_id", "is", null);
+    // Build per-item CJ variant mappings
+    const orderProducts: { vid: string; quantity: number }[] = [];
 
-      if (invItems && invItems.length > 0) {
-        const spIds = invItems.map(i => i.source_product_id).filter(Boolean);
-        const { data: sourceProds } = await supabase
-          .from("source_products")
-          .select("*")
+    for (const item of items) {
+      const sku = item.sku;
+      const qty = item.quantity || 1;
+      let vid: string | null = null;
+
+      // Path 1: sku_map (ebay_sku → cj_variant_id) — most reliable
+      if (sku) {
+        const { data: skuMapping } = await supabase
+          .from("sku_map")
+          .select("cj_variant_id")
           .eq("seller_id", sellerId)
-          .eq("source_type", "cjdropshipping")
-          .in("id", spIds);
-        if (sourceProds) cjProducts.push(...sourceProds);
+          .eq("ebay_sku", sku)
+          .eq("active", true)
+          .maybeSingle();
+        if (skuMapping) vid = skuMapping.cj_variant_id;
       }
-    }
 
-    // Path 2: via ebay_offers listing_id → sku → ebay_inventory_items → source_product
-    if (cjProducts.length === 0 && itemIds.length > 0) {
-      const { data: offers } = await supabase
-        .from("ebay_offers")
-        .select("sku, listing_id")
-        .eq("seller_id", sellerId)
-        .in("listing_id", itemIds);
-      
-      if (offers && offers.length > 0) {
-        const offerSkus = offers.map(o => o.sku);
-        const { data: invItems2 } = await supabase
+      // Path 2: ebay_inventory_items → source_product → first variant
+      if (!vid && sku) {
+        const { data: invItem } = await supabase
           .from("ebay_inventory_items")
-          .select("sku, source_product_id")
+          .select("source_product_id")
           .eq("seller_id", sellerId)
-          .in("sku", offerSkus)
-          .not("source_product_id", "is", null);
-        
-        if (invItems2 && invItems2.length > 0) {
-          const spIds2 = invItems2.map(i => i.source_product_id).filter(Boolean);
-          const { data: sourceProds2 } = await supabase
+          .eq("sku", sku)
+          .not("source_product_id", "is", null)
+          .maybeSingle();
+
+        if (invItem?.source_product_id) {
+          const { data: sp } = await supabase
             .from("source_products")
-            .select("*")
-            .eq("seller_id", sellerId)
+            .select("source_id, variants_json")
+            .eq("id", invItem.source_product_id)
             .eq("source_type", "cjdropshipping")
-            .in("id", spIds2);
-          if (sourceProds2) cjProducts.push(...sourceProds2);
+            .maybeSingle();
+          if (sp) {
+            const variants = (sp.variants_json as any[]) || [];
+            vid = variants[0]?.vid || sp.source_id;
+          }
         }
       }
-    }
 
-    // Path 3: Direct lookup - check if any source_products with source_type='cjdropshipping' exist for this seller
-    // and try matching by title similarity (fallback)
-    if (cjProducts.length === 0) {
-      const { data: allCjProducts } = await supabase
-        .from("source_products")
-        .select("*")
-        .eq("seller_id", sellerId)
-        .eq("source_type", "cjdropshipping");
-      
-      if (!allCjProducts || allCjProducts.length === 0) {
-        throw new Error(
-          "Keine CJ-Produkte gefunden. Importiere zuerst Produkte über den CJ-Tab im Import-Dialog, " +
-          "damit sie mit deinen eBay-Bestellungen verknüpft werden können."
-        );
+      // Path 3: via ebay_offers listing_id → sku → inventory → source_product
+      if (!vid && item.itemId) {
+        const { data: offer } = await supabase
+          .from("ebay_offers")
+          .select("sku")
+          .eq("seller_id", sellerId)
+          .eq("listing_id", item.itemId)
+          .maybeSingle();
+
+        if (offer?.sku) {
+          const { data: invItem2 } = await supabase
+            .from("ebay_inventory_items")
+            .select("source_product_id")
+            .eq("seller_id", sellerId)
+            .eq("sku", offer.sku)
+            .not("source_product_id", "is", null)
+            .maybeSingle();
+
+          if (invItem2?.source_product_id) {
+            const { data: sp2 } = await supabase
+              .from("source_products")
+              .select("source_id, variants_json")
+              .eq("id", invItem2.source_product_id)
+              .eq("source_type", "cjdropshipping")
+              .maybeSingle();
+            if (sp2) {
+              const variants = (sp2.variants_json as any[]) || [];
+              vid = variants[0]?.vid || sp2.source_id;
+            }
+          }
+        }
       }
 
-      // Use all CJ products as fallback (user needs to manually link)
-      cjProducts = allCjProducts;
+      if (vid) {
+        orderProducts.push({ vid, quantity: qty });
+      } else {
+        console.warn(`No CJ variant found for order item SKU=${sku} itemId=${item.itemId}`);
+      }
+    }
+
+    if (orderProducts.length === 0) {
+      throw new Error(
+        "Kein CJ-Produkt konnte dem Bestell-Item zugeordnet werden. " +
+        "Stelle sicher, dass ein SKU-Mapping (sku_map) oder eine Verknüpfung über ebay_inventory_items existiert."
+      );
     }
 
     const token = await getCJAccessToken();
-
-    // Build CJ order products from found CJ source products
-    const orderProducts = cjProducts.map((p: any) => {
-      const variants = p.variants_json || [];
-      const firstVariant = variants[0];
-      return {
-        vid: firstVariant?.vid || p.source_id,
-        quantity: items[0]?.quantity || 1,
-      };
-    }).filter((p: any) => p.vid);
 
     if (orderProducts.length === 0) {
       throw new Error("CJ-Produkte haben keine gültigen Varianten-IDs. Überprüfe die importierten CJ-Produkte.");
