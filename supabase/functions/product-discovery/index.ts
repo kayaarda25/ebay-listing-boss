@@ -76,9 +76,9 @@ Deno.serve(async (req) => {
       return jsonRes({ ok: false, error: "sellerId required" }, 422);
     }
 
-    // Check how many listings created today
+    // Check how many listings created today (resets at 00:00 UTC)
     const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+    todayStart.setUTCHours(0, 0, 0, 0);
     const { count: todayCount } = await supabase
       .from("ebay_offers")
       .select("id", { count: "exact", head: true })
