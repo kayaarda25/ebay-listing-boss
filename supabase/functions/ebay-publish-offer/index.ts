@@ -75,6 +75,14 @@ Deno.serve(async (req) => {
         const images = rawImages
           .filter(url => url && typeof url === 'string' && url.startsWith('http'))
           .slice(0, 12);
+
+        if (images.length === 0) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Keine Produktbilder vorhanden. Bitte zuerst Bilder zum Produkt hinzufügen (source_products.images_json).' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
         const pictureUrls = images.map(url => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
 
         // Build item specifics from product attributes
