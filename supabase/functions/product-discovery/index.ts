@@ -143,7 +143,8 @@ Deno.serve(async (req) => {
               continue;
             }
 
-            // Verify product is still available via detail API
+            // Verify product is still available via detail API & get full images
+            let detailProduct: any = null;
             try {
               const detailRes = await rateLimitedCJFetch(`${CJ_BASE}/product/query?pid=${p.pid}`, {
                 headers: { "CJ-Access-Token": token },
@@ -153,6 +154,7 @@ Deno.serve(async (req) => {
                 console.log(`Product ${p.pid} no longer available on CJ, skipping`);
                 continue;
               }
+              detailProduct = detailData.data;
             } catch {
               console.log(`Could not verify product ${p.pid}, skipping`);
               continue;
@@ -167,28 +169,34 @@ Deno.serve(async (req) => {
               .maybeSingle();
             if (existing) continue;
 
-            // Get images
-            const images = p.productImageSet || (p.productImage ? [p.productImage] : []);
-            
-            // Filter: need enough images
-            const goodImages = filterImages(images);
+            // Get ALL images from detail API (much more than list API)
+            const detailImages = detailProduct?.productImageSet || detailProduct?.productImage 
+              ? [...(detailProduct.productImageSet || []), ...(detailProduct.productImage && !detailProduct.productImageSet?.includes(detailProduct.productImage) ? [detailProduct.productImage] : [])]
+              : [];
+            const listImages = p.productImageSet || (p.productImage ? [p.productImage] : []);
+            const goodImages = filterImages(allImages);
             if (goodImages.length < MIN_IMAGES) continue;
+
+            console.log(`Product ${p.pid}: ${goodImages.length} images from detail API`);
+
+            // Use variants from detail API if available (more complete)
+            const detailVariants = detailProduct?.variants || p.variants || [];
 
             // Calculate shipping to DE
             let shippingCost = 3.0; // default estimate
             try {
-              if (p.variants?.[0]?.vid) {
+              const vid = detailVariants[0]?.vid || p.variants?.[0]?.vid;
+              if (vid) {
                 const freightRes = await rateLimitedCJFetch(`${CJ_BASE}/logistic/freightCalculate`, {
                   method: "POST",
                   headers: { "CJ-Access-Token": token, "Content-Type": "application/json" },
                   body: JSON.stringify({
                     endCountryCode: "DE",
-                    products: [{ quantity: 1, vid: p.variants[0].vid }],
+                    products: [{ quantity: 1, vid }],
                   }),
                 });
                 const freightData = await freightRes.json();
                 if (freightData.data?.length > 0) {
-                  // Pick cheapest EU shipping
                   const cheapest = freightData.data
                     .filter((f: any) => f.logisticPrice)
                     .sort((a: any, b: any) => a.logisticPrice - b.logisticPrice)[0];
@@ -204,9 +212,9 @@ Deno.serve(async (req) => {
               pid: p.pid,
               name: p.productNameEn || p.productName || "",
               price,
-              image: p.productImage || goodImages[0],
+              image: goodImages[0],
               images: goodImages,
-              variants: (p.variants || []).map((v: any) => ({
+              variants: detailVariants.map((v: any) => ({
                 vid: v.vid,
                 name: v.variantNameEn || v.variantName,
                 price: v.variantSellPrice || v.variantPrice || price,

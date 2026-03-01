@@ -175,7 +175,14 @@ export function ProductDetailDialog({ product, open, onOpenChange, onUpdate, onD
           {product.description && (
             <div>
               <h4 className="text-sm font-medium text-foreground mb-1">Beschreibung</h4>
-              <p className="text-sm text-muted-foreground leading-relaxed">{product.description}</p>
+              {product.description.includes('<') ? (
+                <div
+                  className="text-sm text-muted-foreground leading-relaxed prose prose-sm max-w-none dark:prose-invert"
+                  dangerouslySetInnerHTML={{ __html: product.description }}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground leading-relaxed">{product.description}</p>
+              )}
             </div>
           )}
 
