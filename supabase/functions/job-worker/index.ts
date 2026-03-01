@@ -36,6 +36,19 @@ Deno.serve(async (req) => {
     });
   }
 
+  // ===== UNSTICK STALE RUNNING JOBS =====
+  // Jobs stuck in "running" for >10 minutes get reset to failed
+  try {
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    await supabase
+      .from("jobs")
+      .update({ state: "failed", error: "Timeout: stuck in running >10min" })
+      .eq("state", "running")
+      .lte("updated_at", tenMinAgo);
+  } catch (err) {
+    console.error("Unstick cleanup error:", err);
+  }
+
   // ===== AUTOPILOT CONTINUOUS MODE =====
   // Check all sellers with autopilot_active and queue their workflows
   try {
@@ -53,20 +66,22 @@ Deno.serve(async (req) => {
       
       if (Date.now() - lastRun < intervalMs) continue;
 
-      // Queue a single autopilot_cycle job that runs all workflows sequentially and generates a report
-      const { data: existingCycle } = await supabase
+      // Queue individual phase jobs instead of one long cycle to avoid timeouts
+      const { data: existingPhase } = await supabase
         .from("jobs")
         .select("id")
         .eq("seller_id", seller.id)
-        .eq("type", "autopilot_cycle")
+        .in("type", ["autopilot_cycle", "autopilot_discovery", "autopilot_listings", "autopilot_order_sync", "autopilot_fulfillment", "autopilot_tracking", "autopilot_optimize"])
         .in("state", ["queued", "running"])
+        .limit(1)
         .maybeSingle();
 
-      if (!existingCycle) {
+      if (!existingPhase) {
+        // Queue phase 1: discovery, then chain the rest
         await supabase.from("jobs").insert({
           seller_id: seller.id,
           type: "autopilot_cycle",
-          input: { workflows: settings.autopilot_workflows || ["discovery", "listings", "order_sync", "fulfillment", "tracking", "optimize"], auto: true },
+          input: { phase: "discovery", workflows: settings.autopilot_workflows || ["discovery", "listings", "order_sync", "fulfillment", "tracking", "optimize"], auto: true },
           state: "queued",
         });
       }
@@ -518,150 +533,197 @@ async function processAutopilotOptimize(supabase: any, job: any): Promise<any> {
 async function processAutopilotCycle(supabase: any, job: any): Promise<any> {
   const sellerId = job.seller_id;
   const workflows: string[] = job.input?.workflows || ["discovery", "listings", "order_sync", "fulfillment", "tracking", "optimize"];
-  
-  const reportDetails: { icon: string; text: string }[] = [];
-  const stats: Record<string, number> = {};
-  const errors: string[] = [];
+  const phase: string = job.input?.phase || "discovery";
+  const reportData: any = job.input?.reportData || { details: [], stats: {}, errors: [] };
 
-  // 1. DISCOVERY
-  if (workflows.includes("discovery")) {
-    try {
-      const result = await processAutopilotDiscovery(supabase, job);
-      const discovered = result.discovered || 0;
-      const imported = result.imported || 0;
-      stats.entdeckt = discovered;
-      stats.importiert = imported;
-      if (discovered > 0) {
-        reportDetails.push({ icon: "discovery", text: `${discovered} neue Produkte entdeckt, ${imported} importiert` });
-      } else {
-        reportDetails.push({ icon: "info", text: "Keine neuen Produkte gefunden" });
-      }
-    } catch (err) {
-      errors.push(`Discovery: ${String(err)}`);
-      reportDetails.push({ icon: "error", text: `Discovery fehlgeschlagen: ${String(err).substring(0, 100)}` });
-    }
-  }
+  const reportDetails: { icon: string; text: string }[] = reportData.details || [];
+  const stats: Record<string, number> = reportData.stats || {};
+  const errors: string[] = reportData.errors || [];
 
-  // 2. AUTO-LIST new draft offers
-  if (workflows.includes("listings")) {
-    try {
-      const { data: drafts } = await supabase
-        .from("ebay_offers")
-        .select("id, title, sku")
-        .eq("seller_id", sellerId)
-        .eq("state", "draft")
-        .is("listing_id", null)
-        .limit(10);
+  let nextPhase: string | null = null;
 
-      let listed = 0;
-      let listErrors = 0;
-      for (const draft of drafts || []) {
-        try {
-          await processListingPublish(supabase, { ...job, input: { offerId: draft.id } });
-          listed++;
-          reportDetails.push({ icon: "listing", text: `Listing erstellt: ${(draft.title || draft.sku).substring(0, 60)}` });
-        } catch (err) {
-          listErrors++;
-          const errMsg = String(err);
-          // Don't fail entire cycle for payment-hold warnings
-          if (errMsg.includes("einbehalten") || errMsg.includes("pending-payments")) {
-            reportDetails.push({ icon: "error", text: `Listing blockiert (Zahlungseinbehaltung): ${(draft.title || draft.sku).substring(0, 40)}` });
-          } else {
-            reportDetails.push({ icon: "error", text: `Listing Fehler: ${errMsg.substring(0, 80)}` });
+  try {
+    switch (phase) {
+      case "discovery": {
+        if (workflows.includes("discovery")) {
+          try {
+            const result = await processAutopilotDiscovery(supabase, job);
+            stats.entdeckt = result.discovered || 0;
+            stats.importiert = result.imported || 0;
+            if (result.discovered > 0) {
+              reportDetails.push({ icon: "discovery", text: `${result.discovered} neue Produkte entdeckt, ${result.imported} importiert` });
+            } else {
+              reportDetails.push({ icon: "info", text: "Keine neuen Produkte gefunden" });
+            }
+          } catch (err) {
+            errors.push(`Discovery: ${String(err)}`);
+            reportDetails.push({ icon: "error", text: `Discovery fehlgeschlagen: ${String(err).substring(0, 100)}` });
           }
         }
+        nextPhase = "listings";
+        break;
       }
-      stats.gelistet = listed;
-      if (listErrors > 0) stats.listing_fehler = listErrors;
-    } catch (err) {
-      errors.push(`Listings: ${String(err)}`);
-    }
-  }
 
-  // 3. ORDER SYNC
-  if (workflows.includes("order_sync")) {
-    try {
-      const result = await processOrdersSync(supabase, job);
-      stats.orders_synced = result.synced || 0;
-      if (result.synced > 0) {
-        reportDetails.push({ icon: "order", text: `${result.synced} Bestellungen synchronisiert` });
-      }
-    } catch (err) {
-      errors.push(`Order Sync: ${String(err)}`);
-      reportDetails.push({ icon: "error", text: `Order-Sync fehlgeschlagen: ${String(err).substring(0, 80)}` });
-    }
-  }
+      case "listings": {
+        if (workflows.includes("listings")) {
+          try {
+            const { data: drafts } = await supabase
+              .from("ebay_offers")
+              .select("id, title, sku")
+              .eq("seller_id", sellerId)
+              .eq("state", "draft")
+              .is("listing_id", null)
+              .limit(5); // Reduced to avoid timeout
 
-  // 4. FULFILLMENT - auto-fulfill pending orders with SKU mappings
-  if (workflows.includes("fulfillment")) {
-    try {
-      const { data: pendingOrders } = await supabase
-        .from("orders")
-        .select("id, order_id")
-        .eq("seller_id", sellerId)
-        .eq("needs_fulfillment", true)
-        .in("order_status", ["pending", "processing", "completed"])
-        .limit(10);
+            let listed = 0;
+            let listErrors = 0;
+            for (const draft of drafts || []) {
+              try {
+                await processListingPublish(supabase, { ...job, input: { offerId: draft.id } });
+                listed++;
+                reportDetails.push({ icon: "listing", text: `Listing erstellt: ${(draft.title || draft.sku).substring(0, 60)}` });
+              } catch (err) {
+                listErrors++;
+                reportDetails.push({ icon: "error", text: `Listing Fehler: ${String(err).substring(0, 80)}` });
+              }
+            }
+            stats.gelistet = (stats.gelistet || 0) + listed;
+            if (listErrors > 0) stats.listing_fehler = (stats.listing_fehler || 0) + listErrors;
 
-      let fulfilled = 0;
-      for (const order of pendingOrders || []) {
-        try {
-          await processOrderFulfill(supabase, { ...job, input: { orderId: order.id } });
-          fulfilled++;
-          reportDetails.push({ icon: "fulfillment", text: `Order ${order.order_id} fulfilled` });
-        } catch (fulfillErr) {
-          console.error(`Fulfillment failed for ${order.order_id}:`, String(fulfillErr));
-          reportDetails.push({ icon: "error", text: `Fulfillment ${order.order_id}: ${String(fulfillErr).substring(0, 80)}` });
-        }
-      }
-      stats.fulfilled = fulfilled;
-    } catch (err) {
-      errors.push(`Fulfillment: ${String(err)}`);
-    }
-  }
+            // If there are more drafts, queue another listings phase
+            const { data: moreDrafts } = await supabase
+              .from("ebay_offers")
+              .select("id")
+              .eq("seller_id", sellerId)
+              .eq("state", "draft")
+              .is("listing_id", null)
+              .limit(1);
 
-  // 5. TRACKING
-  if (workflows.includes("tracking")) {
-    try {
-      const { data: processingOrders } = await supabase
-        .from("orders")
-        .select("id, order_id")
-        .eq("seller_id", sellerId)
-        .eq("order_status", "processing")
-        .limit(20);
-
-      let tracked = 0;
-      for (const order of processingOrders || []) {
-        try {
-          const result = await processTrackingSync(supabase, { ...job, input: { orderId: order.id } });
-          if (result.updated) {
-            tracked++;
-            reportDetails.push({ icon: "tracking", text: `Tracking für Order ${order.order_id}: ${result.trackingNumber}` });
+            if (moreDrafts && moreDrafts.length > 0) {
+              nextPhase = "listings"; // continue listing more
+              break;
+            }
+          } catch (err) {
+            errors.push(`Listings: ${String(err)}`);
           }
-        } catch {
-          // Skip orders without CJ order ID
         }
+        nextPhase = "order_sync";
+        break;
       }
-      if (tracked > 0) stats.tracking = tracked;
-    } catch (err) {
-      errors.push(`Tracking: ${String(err)}`);
+
+      case "order_sync": {
+        if (workflows.includes("order_sync")) {
+          try {
+            const result = await processOrdersSync(supabase, job);
+            stats.orders_synced = result.synced || 0;
+            if (result.synced > 0) {
+              reportDetails.push({ icon: "order", text: `${result.synced} Bestellungen synchronisiert` });
+            }
+          } catch (err) {
+            errors.push(`Order Sync: ${String(err)}`);
+            reportDetails.push({ icon: "error", text: `Order-Sync fehlgeschlagen: ${String(err).substring(0, 80)}` });
+          }
+        }
+        nextPhase = "fulfillment";
+        break;
+      }
+
+      case "fulfillment": {
+        if (workflows.includes("fulfillment")) {
+          try {
+            const { data: pendingOrders } = await supabase
+              .from("orders")
+              .select("id, order_id")
+              .eq("seller_id", sellerId)
+              .eq("needs_fulfillment", true)
+              .in("order_status", ["pending", "processing", "completed"])
+              .limit(5);
+
+            let fulfilled = 0;
+            for (const order of pendingOrders || []) {
+              try {
+                await processOrderFulfill(supabase, { ...job, input: { orderId: order.id } });
+                fulfilled++;
+                reportDetails.push({ icon: "fulfillment", text: `Order ${order.order_id} fulfilled` });
+              } catch (fulfillErr) {
+                reportDetails.push({ icon: "error", text: `Fulfillment ${order.order_id}: ${String(fulfillErr).substring(0, 80)}` });
+              }
+            }
+            stats.fulfilled = (stats.fulfilled || 0) + fulfilled;
+          } catch (err) {
+            errors.push(`Fulfillment: ${String(err)}`);
+          }
+        }
+        nextPhase = "tracking";
+        break;
+      }
+
+      case "tracking": {
+        if (workflows.includes("tracking")) {
+          try {
+            const { data: processingOrders } = await supabase
+              .from("orders")
+              .select("id, order_id")
+              .eq("seller_id", sellerId)
+              .eq("order_status", "processing")
+              .limit(10);
+
+            let tracked = 0;
+            for (const order of processingOrders || []) {
+              try {
+                const result = await processTrackingSync(supabase, { ...job, input: { orderId: order.id } });
+                if (result.updated) {
+                  tracked++;
+                  reportDetails.push({ icon: "tracking", text: `Tracking für Order ${order.order_id}: ${result.trackingNumber}` });
+                }
+              } catch { /* skip */ }
+            }
+            if (tracked > 0) stats.tracking = tracked;
+          } catch (err) {
+            errors.push(`Tracking: ${String(err)}`);
+          }
+        }
+        nextPhase = "optimize";
+        break;
+      }
+
+      case "optimize": {
+        if (workflows.includes("optimize")) {
+          try {
+            const result = await processAutopilotOptimize(supabase, job);
+            if (result.deactivated > 0) {
+              stats.deaktiviert = result.deactivated;
+              reportDetails.push({ icon: "optimize", text: `${result.deactivated} inaktive Listings pausiert` });
+            }
+          } catch (err) {
+            errors.push(`Optimize: ${String(err)}`);
+          }
+        }
+        nextPhase = "report";
+        break;
+      }
+
+      case "report":
+      default:
+        nextPhase = null;
+        break;
     }
+  } catch (err) {
+    errors.push(`Phase ${phase}: ${String(err)}`);
   }
 
-  // 6. OPTIMIZE
-  if (workflows.includes("optimize")) {
-    try {
-      const result = await processAutopilotOptimize(supabase, job);
-      if (result.deactivated > 0) {
-        stats.deaktiviert = result.deactivated;
-        reportDetails.push({ icon: "optimize", text: `${result.deactivated} inaktive Listings pausiert` });
-      }
-    } catch (err) {
-      errors.push(`Optimize: ${String(err)}`);
-    }
+  // Queue next phase or write final report
+  if (nextPhase && nextPhase !== "report") {
+    await supabase.from("jobs").insert({
+      seller_id: sellerId,
+      type: "autopilot_cycle",
+      input: { phase: nextPhase, workflows, reportData: { details: reportDetails, stats, errors }, auto: true },
+      state: "queued",
+    });
+    return { phase, nextPhase, stats };
   }
 
-  // Build human summary
+  // Final: write report
   const parts: string[] = [];
   if (stats.entdeckt) parts.push(`${stats.entdeckt} Produkte entdeckt`);
   if (stats.gelistet) parts.push(`${stats.gelistet} gelistet`);
@@ -675,7 +737,6 @@ async function processAutopilotCycle(supabase: any, job: any): Promise<any> {
     ? `Autopilot-Zyklus: ${parts.join(", ")}`
     : "Autopilot-Zyklus: Keine Änderungen";
 
-  // Write report
   await supabase.from("autopilot_reports").insert({
     seller_id: sellerId,
     report_type: "cycle",
