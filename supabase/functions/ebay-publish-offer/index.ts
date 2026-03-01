@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ebayTradingCall, xmlBlocks, xmlValue } from "../_shared/ebay-auth.ts";
+import { getCJAccessToken, CJ_BASE } from "../_shared/cj-auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -37,12 +38,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: product } = await supabase
-      .from('source_products')
-      .select('*')
-      .eq('seller_id', sellerId)
-      .eq('source_id', offer.sku)
-      .maybeSingle();
+    const product = await loadSourceProduct(supabase, sellerId, offer.sku);
 
     if (action === "publish" || action === "create") {
       if (offer.listing_id) {
@@ -69,16 +65,24 @@ Deno.serve(async (req) => {
         );
       } else {
         // AddItem – Auktion, da Festpreis für neue Seller oft nicht erlaubt
-        const title = (product?.title || offer.sku).substring(0, 80);
-        const description = product?.description || title;
-        const rawImages = (product?.images_json as string[]) || [];
-        const images = rawImages
-          .filter(url => url && typeof url === 'string' && url.startsWith('http'))
+        const dbImages = normalizeImageUrls(product?.images_json);
+        const cjFallback = dbImages.length === 0 ? await fetchCjProductBySku(offer.sku) : null;
+
+        const title = (product?.title || offer.title || cjFallback?.title || offer.sku).substring(0, 80);
+        const description = product?.description || cjFallback?.description || title;
+        const images = [
+          ...dbImages,
+          ...normalizeImageUrls(cjFallback?.images),
+        ]
+          .filter((url, index, arr) => url.startsWith('http') && arr.indexOf(url) === index)
           .slice(0, 12);
 
         if (images.length === 0) {
           return new Response(
-            JSON.stringify({ success: false, error: 'Keine Produktbilder vorhanden. Bitte zuerst Bilder zum Produkt hinzufügen (source_products.images_json).' }),
+            JSON.stringify({
+              success: false,
+              error: `Keine Produktbilder vorhanden (SKU: ${offer.sku}). Bitte Produkt neu importieren oder Bilder in source_products.images_json hinterlegen.`,
+            }),
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
@@ -494,6 +498,114 @@ function buildItemSpecifics(attributes: Record<string, string>): string {
   return `<ItemSpecifics>${nameValues}</ItemSpecifics>`;
 }
 
+async function loadSourceProduct(supabase: any, sellerId: string, sku: string): Promise<Record<string, any> | null> {
+  const bySource = await supabase
+    .from('source_products')
+    .select('*')
+    .eq('seller_id', sellerId)
+    .eq('source_id', sku)
+    .maybeSingle();
+
+  if (bySource?.data) return bySource.data;
+
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sku)) {
+    const byId = await supabase
+      .from('source_products')
+      .select('*')
+      .eq('seller_id', sellerId)
+      .eq('id', sku)
+      .maybeSingle();
+
+    if (byId?.data) return byId.data;
+  }
+
+  return null;
+}
+
+function normalizeImageUrls(raw: unknown): string[] {
+  const urls: string[] = [];
+
+  const collect = (value: unknown) => {
+    if (value == null) return;
+
+    if (Array.isArray(value)) {
+      value.forEach(collect);
+      return;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return;
+
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try {
+          collect(JSON.parse(trimmed));
+          return;
+        } catch {
+          // Keep processing as plain string
+        }
+      }
+
+      const normalized = trimmed.startsWith('//') ? `https:${trimmed}` : trimmed;
+      if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
+        urls.push(normalized);
+      }
+      return;
+    }
+
+    if (typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+      collect(obj.url);
+      collect(obj.image);
+      collect(obj.imageUrl);
+      collect(obj.src);
+      collect(obj.mainImage);
+      collect(obj.images);
+    }
+  };
+
+  collect(raw);
+  return [...new Set(urls)];
+}
+
+async function fetchCjProductBySku(sku: string): Promise<{ title?: string | null; description?: string | null; images?: unknown } | null> {
+  if (!/^\d{10,}$/.test(sku)) return null;
+
+  try {
+    const token = await getCJAccessToken();
+    const res = await fetch(`${CJ_BASE}/product/query?pid=${encodeURIComponent(sku)}`, {
+      headers: { 'CJ-Access-Token': token },
+    });
+
+    if (!res.ok) return null;
+
+    const payload = await res.json();
+    const detail = payload?.data;
+    if (payload?.code !== 200 || !detail) return null;
+
+    const images = normalizeImageUrls([
+      detail.productImage,
+      detail.productImages,
+      detail.image,
+      detail.images,
+      detail.bigImage,
+      detail.bigImages,
+      detail.productImageList,
+    ]);
+
+    if (images.length === 0) return null;
+
+    return {
+      title: detail.productName || detail.name || null,
+      description: detail.description || detail.productDesc || null,
+      images,
+    };
+  } catch (error) {
+    console.warn(`CJ fallback failed for SKU ${sku}:`, String(error));
+    return null;
+  }
+}
+
 function escapeXml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -502,3 +614,4 @@ function escapeXml(str: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
 }
+
