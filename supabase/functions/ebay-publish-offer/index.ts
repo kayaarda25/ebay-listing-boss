@@ -77,53 +77,53 @@ Deno.serve(async (req) => {
           .slice(0, 12);
         const pictureUrls = images.map(url => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
 
-        // Default to 20081 = "Sonstige" under "Sammeln & Seltenes" – a valid eBay.de leaf category
-        const categoryId = offer.category_id || "20081";
+        let categoryId = offer.category_id || await suggestCategoryId(title);
+        if (!categoryId) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Keine gültige eBay-Kategorie gefunden. Bitte Kategorie manuell setzen.' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
 
         // Build item specifics from product attributes
         const attributes = (product?.attributes_json as Record<string, string>) || {};
         const itemSpecifics = buildItemSpecifics(attributes);
 
-        const xml = await ebayTradingCall({
-          callName: "AddItem",
-          body: `
-            <Item>
-              <Title>${escapeXml(title)}</Title>
-              <Description><![CDATA[${description}]]></Description>
-              <PrimaryCategory>
-                <CategoryID>${categoryId}</CategoryID>
-              </PrimaryCategory>
-              <StartPrice currencyID="EUR">${offer.price || 0}</StartPrice>
-              <Quantity>1</Quantity>
-              <ListingDuration>Days_7</ListingDuration>
-              <ListingType>Chinese</ListingType>
-              <Country>DE</Country>
-              <Currency>EUR</Currency>
-              <Location>Deutschland</Location>
-              <SKU>${escapeXml(offer.sku)}</SKU>
-              <PictureDetails>
-                ${pictureUrls}
-              </PictureDetails>
-              <DispatchTimeMax>3</DispatchTimeMax>
-              <ShippingDetails>
-                <ShippingType>Flat</ShippingType>
-                <ShippingServiceOptions>
-                  <ShippingServicePriority>1</ShippingServicePriority>
-                  <ShippingService>DE_DHLPaket</ShippingService>
-                  <ShippingServiceCost currencyID="EUR">0.00</ShippingServiceCost>
-                  <ShippingServiceAdditionalCost currencyID="EUR">0.00</ShippingServiceAdditionalCost>
-                  <FreeShipping>true</FreeShipping>
-                </ShippingServiceOptions>
-              </ShippingDetails>
-              <ReturnPolicy>
-                <ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>
-                <ReturnsWithinOption>Days_30</ReturnsWithinOption>
-                <ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>
-              </ReturnPolicy>
-              ${itemSpecifics}
-            </Item>
-          `,
-        });
+        let xml: string;
+        try {
+          xml = await publishAuctionListing({
+            title,
+            description,
+            categoryId,
+            price: offer.price || 0,
+            sku: offer.sku,
+            pictureUrls,
+            itemSpecifics,
+          });
+        } catch (error) {
+          const errorMessage = String(error);
+          const shouldRetryWithSuggestedCategory = errorMessage.includes("Kategorie ist nicht gültig");
+
+          if (!shouldRetryWithSuggestedCategory) {
+            throw error;
+          }
+
+          const suggestedCategoryId = await suggestCategoryId(title);
+          if (!suggestedCategoryId || suggestedCategoryId === categoryId) {
+            throw error;
+          }
+
+          categoryId = suggestedCategoryId;
+          xml = await publishAuctionListing({
+            title,
+            description,
+            categoryId,
+            price: offer.price || 0,
+            sku: offer.sku,
+            pictureUrls,
+            itemSpecifics,
+          });
+        }
 
         const itemId = xmlValue(xml, "ItemID");
 
@@ -140,6 +140,7 @@ Deno.serve(async (req) => {
 
         await supabase.from('ebay_offers').update({
           listing_id: itemId,
+          category_id: categoryId,
           state: 'published',
           last_synced_at: new Date().toISOString(),
         }).eq('id', offerId);
@@ -190,7 +191,83 @@ Deno.serve(async (req) => {
   }
 });
 
-/** Build <ItemSpecifics> XML from product attributes. 
+interface PublishAuctionListingParams {
+  title: string;
+  description: string;
+  categoryId: string;
+  price: number;
+  sku: string;
+  pictureUrls: string;
+  itemSpecifics: string;
+}
+
+async function publishAuctionListing({
+  title,
+  description,
+  categoryId,
+  price,
+  sku,
+  pictureUrls,
+  itemSpecifics,
+}: PublishAuctionListingParams): Promise<string> {
+  return ebayTradingCall({
+    callName: "AddItem",
+    body: `
+      <Item>
+        <Title>${escapeXml(title)}</Title>
+        <Description><![CDATA[${description}]]></Description>
+        <PrimaryCategory>
+          <CategoryID>${categoryId}</CategoryID>
+        </PrimaryCategory>
+        <StartPrice currencyID="EUR">${price}</StartPrice>
+        <Quantity>1</Quantity>
+        <ListingDuration>Days_7</ListingDuration>
+        <ListingType>Chinese</ListingType>
+        <Country>DE</Country>
+        <Currency>EUR</Currency>
+        <Location>Deutschland</Location>
+        <SKU>${escapeXml(sku)}</SKU>
+        <PictureDetails>
+          ${pictureUrls}
+        </PictureDetails>
+        <DispatchTimeMax>3</DispatchTimeMax>
+        <ShippingDetails>
+          <ShippingType>Flat</ShippingType>
+          <ShippingServiceOptions>
+            <ShippingServicePriority>1</ShippingServicePriority>
+            <ShippingService>DE_DHLPaket</ShippingService>
+            <ShippingServiceCost currencyID="EUR">0.00</ShippingServiceCost>
+            <ShippingServiceAdditionalCost currencyID="EUR">0.00</ShippingServiceAdditionalCost>
+            <FreeShipping>true</FreeShipping>
+          </ShippingServiceOptions>
+        </ShippingDetails>
+        <ReturnPolicy>
+          <ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>
+          <ReturnsWithinOption>Days_30</ReturnsWithinOption>
+          <ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>
+        </ReturnPolicy>
+        ${itemSpecifics}
+      </Item>
+    `,
+  });
+}
+
+async function suggestCategoryId(title: string): Promise<string | null> {
+  try {
+    const xml = await ebayTradingCall({
+      callName: "GetSuggestedCategories",
+      body: `<Query>${escapeXml(title.substring(0, 80))}</Query>`,
+    });
+
+    const suggestedCategoryId = xmlValue(xml, "CategoryID");
+    return suggestedCategoryId || null;
+  } catch (error) {
+    console.warn("GetSuggestedCategories failed:", String(error));
+    return null;
+  }
+}
+
+/** Build <ItemSpecifics> XML from product attributes.
  *  Always includes "Marke" = "Unbranded" as fallback. */
 function buildItemSpecifics(attributes: Record<string, string>): string {
   const specs: Record<string, string> = { Marke: "Markenlos", ...attributes };
