@@ -41,6 +41,7 @@ Deno.serve(async (req) => {
 
     // Build per-item CJ variant mappings
     const orderProducts: { vid: string; quantity: number }[] = [];
+    let sourceWarehouse = "CN"; // default origin country
 
     for (const item of items) {
       const sku = item.sku;
@@ -56,7 +57,19 @@ Deno.serve(async (req) => {
           .eq("ebay_sku", sku)
           .eq("active", true)
           .maybeSingle();
-        if (skuMapping) vid = skuMapping.cj_variant_id;
+        if (skuMapping) {
+          vid = skuMapping.cj_variant_id;
+          // Try to get warehouse from linked source_product
+          const { data: spForWh } = await supabase
+            .from("source_products")
+            .select("attributes_json")
+            .eq("seller_id", sellerId)
+            .eq("source_id", sku)
+            .eq("source_type", "cjdropshipping")
+            .maybeSingle();
+          const wh = (spForWh?.attributes_json as any)?.warehouse;
+          if (wh && wh.length === 2) sourceWarehouse = wh.toUpperCase();
+        }
       }
 
       // Path 2: ebay_inventory_items → source_product → first variant
@@ -72,13 +85,15 @@ Deno.serve(async (req) => {
         if (invItem?.source_product_id) {
           const { data: sp } = await supabase
             .from("source_products")
-            .select("source_id, variants_json")
+            .select("source_id, variants_json, attributes_json")
             .eq("id", invItem.source_product_id)
             .eq("source_type", "cjdropshipping")
             .maybeSingle();
           if (sp) {
             const variants = (sp.variants_json as any[]) || [];
             vid = variants[0]?.vid || sp.source_id;
+            const wh = (sp.attributes_json as any)?.warehouse;
+            if (wh && wh.length === 2) sourceWarehouse = wh.toUpperCase();
           }
         }
       }
@@ -159,12 +174,12 @@ Deno.serve(async (req) => {
     }
 
     // Query available shipping methods via CJ Freight API
-    const firstProduct = orderProducts[0];
+    console.log(`Using source warehouse: ${sourceWarehouse} → destination: ${countryCode}`);
     const freightRes = await fetch(`${CJ_BASE}/logistic/freightCalculate`, {
       method: "POST",
       headers: { "CJ-Access-Token": token, "Content-Type": "application/json" },
       body: JSON.stringify({
-        startCountryCode: "CN",
+        startCountryCode: sourceWarehouse,
         endCountryCode: countryCode,
         products: orderProducts.map(p => ({ quantity: p.quantity, vid: p.vid })),
       }),
@@ -194,7 +209,7 @@ Deno.serve(async (req) => {
       shippingAddress: [address.street1, address.street2].filter(Boolean).join(", "),
       shippingCustomerName: buyer.name || "",
       shippingPhone: address.phone || "0000000000",
-      fromCountryCode: "CN",
+      fromCountryCode: sourceWarehouse,
       logisticName,
       remark: `eBay Order ${order.order_id}`,
       products: orderProducts,
