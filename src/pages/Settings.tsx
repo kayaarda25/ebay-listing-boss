@@ -1,5 +1,6 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { PricingSettings } from "@/components/PricingSettings";
+import { ApiKeyManager } from "@/components/ApiKeyManager";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchSeller } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
@@ -175,6 +176,9 @@ const SettingsPage = () => {
             </div>
           </div>
         </div>
+
+        {/* API Keys */}
+        {sellerId && <ApiKeyManager sellerId={sellerId} />}
 
         {/* Pricing Settings */}
         <PricingSettings />
