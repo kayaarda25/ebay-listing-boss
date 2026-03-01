@@ -41,3 +41,6 @@ verify_jwt = false
 
 [functions.job-worker]
 verify_jwt = false
+
+[functions.api-keys-manage]
+verify_jwt = false
