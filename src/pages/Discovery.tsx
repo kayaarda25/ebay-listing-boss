@@ -123,6 +123,23 @@ export default function DiscoveryPage() {
     onError: (err: Error) => toast.error("Discovery Fehler", { description: err.message }),
   });
 
+  const regenerateDescriptions = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("regenerate-descriptions", {
+        body: { sellerId },
+      });
+      if (error) throw new Error(error.message || "Fehler bei der Regenerierung");
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success("Texte auf Deutsch regeneriert", {
+        description: `${data.updated || 0} von ${data.total || 0} Produkten aktualisiert`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["discovery-status"] });
+    },
+    onError: (err: Error) => toast.error("Fehler", { description: err.message }),
+  });
+
   const deactivateStale = useMutation({
     mutationFn: async () => {
       if (!apiKey) throw new Error("API Key benötigt");
@@ -253,6 +270,19 @@ export default function DiscoveryPage() {
                 <Sparkles className="w-4 h-4" />
               )}
               Optimieren
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => regenerateDescriptions.mutate()}
+              disabled={regenerateDescriptions.isPending}
+              className="gap-1.5"
+            >
+              {regenerateDescriptions.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Globe className="w-4 h-4" />
+              )}
+              Texte → Deutsch
             </Button>
           </div>
         </div>
