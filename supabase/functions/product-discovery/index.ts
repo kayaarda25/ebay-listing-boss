@@ -121,6 +121,27 @@ Deno.serve(async (req) => {
             // Apply filters
             if (price < MIN_PRICE || price > MAX_PRICE) continue;
             if (!p.productImage && (!p.productImageSet || p.productImageSet.length === 0)) continue;
+            
+            // Skip removed/invalid products
+            if (p.productStatus && !["VALID", "ON_SALE", "IN_STOCK"].includes(p.productStatus)) {
+              console.log(`Skipping removed/invalid product ${p.pid}: status=${p.productStatus}`);
+              continue;
+            }
+
+            // Verify product is still available via detail API
+            try {
+              const detailRes = await fetch(`${CJ_BASE}/product/query?pid=${p.pid}`, {
+                headers: { "CJ-Access-Token": token },
+              });
+              const detailData = await detailRes.json();
+              if (detailData.code !== 200 || !detailData.data) {
+                console.log(`Product ${p.pid} no longer available on CJ, skipping`);
+                continue;
+              }
+            } catch {
+              console.log(`Could not verify product ${p.pid}, skipping`);
+              continue;
+            }
 
             // Check if already imported
             const { data: existing } = await supabase
