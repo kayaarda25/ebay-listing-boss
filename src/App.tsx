@@ -11,6 +11,7 @@ import OrdersPage from "./pages/Orders";
 import LogsPage from "./pages/Logs";
 import SettingsPage from "./pages/Settings";
 import AuthPage from "./pages/Auth";
+import ApiDocsPage from "./pages/ApiDocs";
 import NotFound from "./pages/NotFound";
 import { ReactNode } from "react";
 
@@ -51,6 +52,7 @@ const App = () => (
               <Route path="/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
               <Route path="/logs" element={<ProtectedRoute><LogsPage /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+              <Route path="/api-docs" element={<ProtectedRoute><ApiDocsPage /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </ThemeProvider>

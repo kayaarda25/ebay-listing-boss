@@ -11,6 +11,7 @@ import {
   BoxesIcon,
   Sun,
   Moon,
+  Book,
 } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "@/hooks/useTheme";
@@ -23,6 +24,7 @@ const navItems = [
   { path: "/orders", label: "Orders", icon: ShoppingCart },
   { path: "/logs", label: "Logs", icon: ScrollText },
   { path: "/settings", label: "Settings", icon: Settings },
+  { path: "/api-docs", label: "API Docs", icon: Book },
 ];
 
 export function AppSidebar() {
