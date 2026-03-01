@@ -45,6 +45,7 @@ Deno.serve(async (req) => {
         // ReviseItem – update existing listing
         const xml = await ebayTradingCall({
           callName: "ReviseItem",
+          sellerId,
           body: `
             <Item>
               <ItemID>${offer.listing_id}</ItemID>
@@ -101,6 +102,7 @@ Deno.serve(async (req) => {
           sku: offer.sku,
           pictureUrls,
           itemSpecifics,
+          sellerId,
         });
 
         if (!categoryId) {
@@ -118,6 +120,7 @@ Deno.serve(async (req) => {
           sku: offer.sku,
           pictureUrls,
           itemSpecifics,
+          sellerId,
         });
 
         const itemId = xmlValue(xml, "ItemID");
@@ -154,6 +157,7 @@ Deno.serve(async (req) => {
 
       await ebayTradingCall({
         callName: "EndItem",
+        sellerId,
         body: `
           <ItemID>${offer.listing_id}</ItemID>
           <EndingReason>NotAvailable</EndingReason>
@@ -195,6 +199,7 @@ interface PublishAuctionListingParams {
   pictureUrls: string;
   itemSpecifics: string;
   conditionId?: string | null;
+  sellerId?: string;
 }
 
 interface ResolveCategoryParams {
@@ -205,6 +210,7 @@ interface ResolveCategoryParams {
   sku: string;
   pictureUrls: string;
   itemSpecifics: string;
+  sellerId?: string;
 }
 
 function buildAuctionItemBody({
@@ -262,6 +268,7 @@ async function publishAuctionListing(params: PublishAuctionListingParams): Promi
     return await ebayTradingCall({
       callName: "AddItem",
       body: buildAuctionItemBody(params),
+      sellerId: params.sellerId,
     });
   } catch (error) {
     const message = String(error);
@@ -274,6 +281,7 @@ async function publishAuctionListing(params: PublishAuctionListingParams): Promi
     return ebayTradingCall({
       callName: "AddItem",
       body: buildAuctionItemBody({ ...params, conditionId: "1000" }),
+      sellerId: params.sellerId,
     });
   }
 }
@@ -283,6 +291,7 @@ async function verifyAuctionListing(params: PublishAuctionListingParams): Promis
   return ebayTradingCall({
     callName: "VerifyAddItem",
     body: buildAuctionItemBody({ ...params, conditionId: params.conditionId || "1000" }),
+    sellerId: params.sellerId,
   });
 }
 
@@ -363,6 +372,7 @@ async function resolveValidCategoryId({
   sku,
   pictureUrls,
   itemSpecifics,
+  sellerId,
 }: ResolveCategoryParams): Promise<string | null> {
   // Build candidate list: preferred → keyword-suggested → known-good leaf categories
   const suggested = suggestCategoryId(title);
@@ -375,7 +385,7 @@ async function resolveValidCategoryId({
   for (const candidateCategoryId of uniqueCandidates) {
     try {
       await verifyAuctionListing({
-        title, description, categoryId: candidateCategoryId, price, sku, pictureUrls, itemSpecifics,
+        title, description, categoryId: candidateCategoryId, price, sku, pictureUrls, itemSpecifics, sellerId,
       });
       console.log(`Category ${candidateCategoryId} verified OK`);
       return candidateCategoryId;
