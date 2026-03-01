@@ -46,6 +46,13 @@ async function resolveAuthToken(sellerId?: string): Promise<string> {
     throw new Error(`Refresh token not found for seller ${seller.ebay_user_id || sellerId}`);
   }
 
+  // Auth'n'Auth tokens start with "v^1.1#" and are used directly (not exchanged)
+  if (refreshToken.startsWith("v^1.1#")) {
+    console.log(`Using Auth'n'Auth token directly for seller ${seller.ebay_user_id || sellerId}`);
+    return refreshToken;
+  }
+
+  // OAuth refresh token → exchange for access token
   // Check cache
   const cacheKey = `ebay_user_token_${sellerId}`;
   const { data: cached } = await supabase
@@ -87,7 +94,7 @@ async function resolveAuthToken(sellerId?: string): Promise<string> {
 
   const tokenData = await res.json();
   const accessToken = tokenData.access_token;
-  const expiresIn = tokenData.expires_in || 7200; // default 2h
+  const expiresIn = tokenData.expires_in || 7200;
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
   // Cache the token

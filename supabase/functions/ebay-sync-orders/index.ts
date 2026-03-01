@@ -50,6 +50,7 @@ Deno.serve(async (req) => {
             <PageNumber>${pageNumber}</PageNumber>
           </Pagination>
         `,
+        sellerId,
       });
 
       const orderBlocks = xmlBlocks(xml, "Order");
