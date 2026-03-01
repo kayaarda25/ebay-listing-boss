@@ -77,8 +77,8 @@ Deno.serve(async (req) => {
           .slice(0, 12);
         const pictureUrls = images.map(url => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
 
-        // Default to "Sonstige" (1) – a valid catch-all leaf category
-        const categoryId = offer.category_id || "1";
+        // Default to 20081 = "Sonstige" under "Sammeln & Seltenes" – a valid eBay.de leaf category
+        const categoryId = offer.category_id || "20081";
 
         // Build item specifics from product attributes
         const attributes = (product?.attributes_json as Record<string, string>) || {};
