@@ -91,6 +91,10 @@ async function routeRequest(ctx: ApiContext, req: Request, path: string): Promis
   if (path === "/v1/discovery/run" && method === "POST") return handleDiscoveryRun(ctx, req);
   if (path === "/v1/discovery/status" && method === "GET") return handleDiscoveryStatus(ctx);
 
+  // === LISTING OPTIMIZATION ===
+  if (path === "/v1/listings/optimize" && method === "POST") return handleListingsOptimize(ctx, req);
+  if (path === "/v1/listings/deactivate-stale" && method === "POST") return handleDeactivateStale(ctx);
+
   return errorResponse("Not found", 404, "NOT_FOUND");
 }
 
@@ -726,7 +730,7 @@ async function handlePatchApiKey(ctx: ApiContext, id: string, req: Request): Pro
 
 async function handleAutopilotRun(ctx: ApiContext, req: Request): Promise<Response> {
   const body = await req.json().catch(() => ({}));
-  const workflows = body.workflows || ["order_sync", "fulfillment", "tracking", "listings", "discovery"];
+  const workflows = body.workflows || ["order_sync", "fulfillment", "tracking", "listings", "discovery", "optimize"];
   const listingTarget = body.listingTarget || 100;
   
   const results: any = { startedAt: new Date().toISOString(), workflows: {} };
@@ -865,6 +869,22 @@ async function handleAutopilotRun(ctx: ApiContext, req: Request): Promise<Respon
       };
     } catch (err) {
       results.workflows.discovery = { status: "error", error: String(err) };
+    }
+  }
+
+  // 6. LISTING OPTIMIZATION (deactivate stale, optimize titles)
+  if (workflows.includes("optimize")) {
+    try {
+      const optimizeReq = new Request("http://localhost", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "full" }),
+      });
+      const optimizeRes = await handleListingsOptimize(ctx, optimizeReq);
+      const optimizeData = await optimizeRes.json();
+      results.workflows.optimize = { status: "completed", ...optimizeData.optimization };
+    } catch (err) {
+      results.workflows.optimize = { status: "error", error: String(err) };
     }
   }
 
@@ -1056,4 +1076,135 @@ async function handleDiscoveryStatus(ctx: ApiContext): Promise<Response> {
       timestamp: new Date().toISOString(),
     },
   });
+}
+
+// ==================== LISTING OPTIMIZATION ====================
+
+async function handleDeactivateStale(ctx: ApiContext): Promise<Response> {
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Find active/published listings older than 14 days
+  const { data: staleListings } = await ctx.supabase
+    .from("ebay_offers")
+    .select("id, sku, title, created_at")
+    .eq("seller_id", ctx.sellerId)
+    .in("state", ["published", "active"])
+    .lte("created_at", fourteenDaysAgo)
+    .limit(50);
+
+  if (!staleListings || staleListings.length === 0) {
+    return jsonResponse({ ok: true, deactivated: 0, message: "No stale listings found" });
+  }
+
+  // Check which of these SKUs have orders
+  const staleSKUs = staleListings.map((l) => l.sku);
+  const { data: orderItems } = await ctx.supabase
+    .from("order_items")
+    .select("sku")
+    .eq("seller_id", ctx.sellerId)
+    .in("sku", staleSKUs);
+
+  const skusWithSales = new Set((orderItems || []).map((oi) => oi.sku));
+  const toDeactivate = staleListings.filter((l) => !skusWithSales.has(l.sku));
+
+  // Deactivate listings without sales
+  const deactivatedIds: string[] = [];
+  for (const listing of toDeactivate) {
+    const { error } = await ctx.supabase
+      .from("ebay_offers")
+      .update({ state: "paused" })
+      .eq("id", listing.id);
+    if (!error) deactivatedIds.push(listing.id);
+  }
+
+  return jsonResponse({
+    ok: true,
+    checked: staleListings.length,
+    withSales: skusWithSales.size,
+    deactivated: deactivatedIds.length,
+    deactivatedIds,
+  });
+}
+
+async function handleListingsOptimize(ctx: ApiContext, req: Request): Promise<Response> {
+  const body = await req.json().catch(() => ({}));
+  const action = body.action || "full"; // full | deactivate_stale | optimize_titles
+
+  const results: any = { actions: {} };
+
+  // 1. Deactivate stale listings
+  if (action === "full" || action === "deactivate_stale") {
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: staleListings } = await ctx.supabase
+      .from("ebay_offers")
+      .select("id, sku, title, created_at")
+      .eq("seller_id", ctx.sellerId)
+      .in("state", ["published", "active"])
+      .lte("created_at", fourteenDaysAgo)
+      .limit(50);
+
+    const staleSKUs = (staleListings || []).map((l) => l.sku);
+    const { data: orderItems } = await ctx.supabase
+      .from("order_items")
+      .select("sku")
+      .eq("seller_id", ctx.sellerId)
+      .in("sku", staleSKUs.length > 0 ? staleSKUs : ["__none__"]);
+
+    const skusWithSales = new Set((orderItems || []).map((oi) => oi.sku));
+    const toDeactivate = (staleListings || []).filter((l) => !skusWithSales.has(l.sku));
+
+    let deactivated = 0;
+    for (const listing of toDeactivate) {
+      const { error } = await ctx.supabase
+        .from("ebay_offers")
+        .update({ state: "paused" })
+        .eq("id", listing.id);
+      if (!error) deactivated++;
+    }
+    results.actions.deactivate_stale = { checked: staleListings?.length || 0, deactivated };
+  }
+
+  // 2. Optimize titles via AI for draft listings
+  if (action === "full" || action === "optimize_titles") {
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const { data: drafts } = await ctx.supabase
+      .from("ebay_offers")
+      .select("id, title, sku")
+      .eq("seller_id", ctx.sellerId)
+      .eq("state", "draft")
+      .limit(10);
+
+    let optimized = 0;
+    for (const draft of drafts || []) {
+      if (!draft.title || !LOVABLE_API_KEY) continue;
+      try {
+        const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-3-flash-preview",
+            messages: [
+              { role: "system", content: "Optimize this eBay title for SEO. Max 80 chars. Structure: Main keyword + benefit + use case. No brand names. Return ONLY the title." },
+              { role: "user", content: draft.title },
+            ],
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const newTitle = data.choices?.[0]?.message?.content?.trim();
+          if (newTitle && newTitle.length <= 80 && newTitle.length > 10) {
+            await ctx.supabase.from("ebay_offers").update({ title: newTitle }).eq("id", draft.id);
+            optimized++;
+          }
+        }
+      } catch { /* skip */ }
+      await new Promise(r => setTimeout(r, 300)); // rate limit
+    }
+    results.actions.optimize_titles = { checked: drafts?.length || 0, optimized };
+  }
+
+  return jsonResponse({ ok: true, optimization: results });
 }
