@@ -484,7 +484,7 @@ function suggestCategoryId(title: string): string {
 /** Build <ItemSpecifics> XML from product attributes.
  *  Always includes "Marke" = "Unbranded" as fallback. */
 function buildItemSpecifics(attributes: Record<string, string>): string {
-  const specs: Record<string, string> = { Marke: "Markenlos", ...attributes };
+  const specs: Record<string, string> = { Marke: "Markenlos", Produktart: "Allgemein", Herstellernummer: "Nicht zutreffend", ...attributes };
 
   const nameValues = Object.entries(specs)
     .filter(([_, v]) => v != null && typeof v !== 'object' && String(v).trim())
