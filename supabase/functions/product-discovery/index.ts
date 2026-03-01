@@ -170,10 +170,12 @@ Deno.serve(async (req) => {
             if (existing) continue;
 
             // Get ALL images from detail API (much more than list API)
-            const detailImages = detailProduct?.productImageSet || detailProduct?.productImage 
-              ? [...(detailProduct.productImageSet || []), ...(detailProduct.productImage && !detailProduct.productImageSet?.includes(detailProduct.productImage) ? [detailProduct.productImage] : [])]
-              : [];
+            const detailImages = detailProduct?.productImageSet 
+              ? [...detailProduct.productImageSet, ...(detailProduct.productImage && !detailProduct.productImageSet.includes(detailProduct.productImage) ? [detailProduct.productImage] : [])]
+              : (detailProduct?.productImage ? [detailProduct.productImage] : []);
             const listImages = p.productImageSet || (p.productImage ? [p.productImage] : []);
+            // Merge detail + list images, deduplicated
+            const allImages = [...new Set([...detailImages, ...listImages])];
             const goodImages = filterImages(allImages);
             if (goodImages.length < MIN_IMAGES) continue;
 
