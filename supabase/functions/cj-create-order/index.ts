@@ -166,6 +166,7 @@ Deno.serve(async (req) => {
       shippingCustomerName: buyer.name || "",
       shippingPhone: address.phone || "0000000000",
       fromCountryCode: "CN",
+      logisticName: "CJPacket Ordinary",
       remark: `eBay Order ${order.order_id}`,
       products: orderProducts,
     };
