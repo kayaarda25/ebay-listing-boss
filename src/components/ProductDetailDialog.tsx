@@ -125,7 +125,9 @@ export function ProductDetailDialog({ product, open, onOpenChange, onUpdate, onD
           {/* Product Info */}
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <span className="text-muted-foreground">ASIN:</span>
+              <span className="text-muted-foreground">
+                {product.source_type === 'cjdropshipping' ? 'CJ ID:' : 'ASIN:'}
+              </span>
               <span className="ml-2 font-mono">{product.source_id}</span>
             </div>
             {attrs.brand && (
@@ -138,6 +140,12 @@ export function ProductDetailDialog({ product, open, onOpenChange, onUpdate, onD
               <div>
                 <span className="text-muted-foreground">Preis:</span>
                 <span className="ml-2 font-semibold font-mono">€{Number(product.price_source).toFixed(2)}</span>
+              </div>
+            )}
+            {product.source_type === 'cjdropshipping' && attrs.warehouse && (
+              <div>
+                <span className="text-muted-foreground">Lager:</span>
+                <span className="ml-2 font-medium text-primary">{attrs.warehouse}</span>
               </div>
             )}
             {attrs.rating != null && (
@@ -246,13 +254,22 @@ export function ProductDetailDialog({ product, open, onOpenChange, onUpdate, onD
                   Auf eBay ansehen (Demo)
                 </a>
               </Button>
-              <Button variant="outline" size="sm" asChild>
-                <a href={`https://www.amazon.de/dp/${product.source_id}`} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="w-4 h-4" />
-                  Auf Amazon ansehen
-                </a>
-              </Button>
-          </div>
+              {product.source_type === 'cjdropshipping' ? (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={`https://cjdropshipping.com/product/p-${product.source_id}.html`} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="w-4 h-4" />
+                    Auf CJ ansehen
+                  </a>
+                </Button>
+              ) : (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={`https://www.amazon.de/dp/${product.source_id}`} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="w-4 h-4" />
+                    Auf Amazon ansehen
+                  </a>
+                </Button>
+              )}
+            </div>
 
           {/* Delete */}
           {onDelete && (
