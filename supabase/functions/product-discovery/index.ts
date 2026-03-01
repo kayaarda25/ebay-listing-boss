@@ -26,9 +26,9 @@ const SEARCH_QUERIES = [
   "massage tools", "smart home",
 ];
 
-const MIN_PRICE = 2;
-const MAX_PRICE = 40;
-const MIN_IMAGES = 4;
+const MIN_PRICE = 1;
+const MAX_PRICE = 50;
+const MIN_IMAGES = 1;
 const PRICE_MULTIPLIER = 2.5;
 const MIN_MARGIN_PCT = 40;
 const DAILY_LISTING_TARGET = 100;
@@ -104,7 +104,11 @@ Deno.serve(async (req) => {
             headers: { "CJ-Access-Token": token },
           });
           const data = await res.json();
-          if (data.code !== 200) continue;
+          console.log(`CJ search "${query}" country=${country}: code=${data.code}, results=${data.data?.list?.length || 0}`);
+          if (data.code !== 200) {
+            console.log(`CJ error response:`, JSON.stringify(data).substring(0, 500));
+            continue;
+          }
 
           const products = data.data?.list || [];
 
@@ -112,11 +116,11 @@ Deno.serve(async (req) => {
             if (discovered.length >= maxProducts) break;
 
             const price = p.sellPrice || p.productPrice || 0;
+            console.log(`Product: ${p.productNameEn?.substring(0, 40)} price=${price} status=${p.productStatus} images=${p.productImageSet?.length || 0}`);
 
             // Apply filters
             if (price < MIN_PRICE || price > MAX_PRICE) continue;
             if (!p.productImage && (!p.productImageSet || p.productImageSet.length === 0)) continue;
-            if (p.productStatus && p.productStatus !== "VALID" && p.productStatus !== "ON_SALE") continue;
 
             // Check if already imported
             const { data: existing } = await supabase
