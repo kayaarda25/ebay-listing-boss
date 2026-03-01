@@ -44,3 +44,6 @@ verify_jwt = false
 
 [functions.api-keys-manage]
 verify_jwt = false
+
+[functions.product-discovery]
+verify_jwt = false
