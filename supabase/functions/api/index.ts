@@ -67,6 +67,12 @@ async function routeRequest(ctx: ApiContext, req: Request, path: string): Promis
   const skuMapPatch = path.match(/^\/v1\/sku-map\/([^/]+)$/);
   if (skuMapPatch && method === "PATCH") return handlePatchSkuMap(ctx, skuMapPatch[1], req);
 
+  // === PRODUCTS (CJ Search) ===
+  if (path === "/v1/products/search" && method === "GET") return handleProductSearch(ctx, req);
+  const productDetailMatch = path.match(/^\/v1\/products\/([^/]+)$/);
+  if (productDetailMatch && method === "GET") return handleProductDetail(ctx, productDetailMatch[1]);
+  if (path === "/v1/products/freight" && method === "POST") return handleFreightCalc(ctx, req);
+
   // === LISTINGS ===
   if (path === "/v1/listings/prepare" && method === "POST") return handleListingsPrepare(ctx, req);
   if (path === "/v1/listings/publish" && method === "POST") return handleListingsPublish(ctx, req);
@@ -430,6 +436,107 @@ async function handlePatchSkuMap(ctx: ApiContext, id: string, req: Request): Pro
 
   if (error) return errorResponse(error.message, 500);
   return jsonResponse({ ok: true, skuMap: data });
+}
+
+// ==================== PRODUCTS (CJ Search) ====================
+
+async function handleProductSearch(ctx: ApiContext, req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const query = url.searchParams.get("q");
+  const pageNum = parseInt(url.searchParams.get("page") || "1");
+  const pageSize = parseInt(url.searchParams.get("limit") || "20");
+  const countryCode = url.searchParams.get("country") || undefined;
+  const categoryId = url.searchParams.get("category") || undefined;
+
+  if (!query) return errorResponse("Query parameter 'q' is required", 422, "VALIDATION_ERROR");
+
+  const token = await getCJAccessToken();
+  const searchUrl = new URL(`${CJ_BASE}/product/list`);
+  searchUrl.searchParams.set("productNameEn", query);
+  searchUrl.searchParams.set("pageNum", String(pageNum));
+  searchUrl.searchParams.set("pageSize", String(pageSize));
+  if (countryCode && countryCode !== "all") searchUrl.searchParams.set("countryCode", countryCode);
+  if (categoryId) searchUrl.searchParams.set("categoryId", categoryId);
+
+  const res = await fetch(searchUrl.toString(), { headers: { "CJ-Access-Token": token } });
+  const data = await res.json();
+  if (data.code !== 200) return errorResponse(`CJ search failed: ${data.message}`, 502);
+
+  const products = (data.data?.list || []).filter((p: any) => {
+    if (!p.sellPrice && !p.productPrice) return false;
+    if (p.productStatus && p.productStatus !== "VALID" && p.productStatus !== "ON_SALE") return false;
+    if (!p.productImage && (!p.productImageSet || p.productImageSet.length === 0)) return false;
+    return true;
+  });
+
+  return jsonResponse({
+    ok: true,
+    products: products.map((p: any) => ({
+      pid: p.pid,
+      name: p.productNameEn,
+      image: p.productImage,
+      price: p.sellPrice || p.productPrice,
+      category: p.categoryName,
+      variants: p.variantCount || 0,
+    })),
+    total: data.data?.total || 0,
+    page: pageNum,
+    limit: pageSize,
+  });
+}
+
+async function handleProductDetail(ctx: ApiContext, productId: string): Promise<Response> {
+  const token = await getCJAccessToken();
+  const res = await fetch(`${CJ_BASE}/product/query?pid=${productId}`, {
+    headers: { "CJ-Access-Token": token },
+  });
+  const data = await res.json();
+  if (data.code !== 200) return errorResponse(`CJ product query failed: ${data.message}`, 502);
+
+  const p = data.data;
+  return jsonResponse({
+    ok: true,
+    product: {
+      pid: p.pid,
+      name: p.productNameEn,
+      description: p.description,
+      image: p.productImage,
+      images: p.productImageSet || [],
+      price: p.sellPrice,
+      weight: p.productWeight,
+      variants: (p.variants || []).map((v: any) => ({
+        vid: v.vid,
+        name: v.variantNameEn,
+        price: v.variantSellPrice || v.variantPrice,
+        image: v.variantImage,
+        stock: v.variantVolume,
+      })),
+    },
+  });
+}
+
+async function handleFreightCalc(ctx: ApiContext, req: Request): Promise<Response> {
+  const body = await req.json();
+  const { vid, countryCode = "DE", quantity = 1 } = body;
+  if (!vid) return errorResponse("vid is required", 422, "VALIDATION_ERROR");
+
+  const token = await getCJAccessToken();
+  const res = await fetch(`${CJ_BASE}/logistic/freightCalculate`, {
+    method: "POST",
+    headers: { "CJ-Access-Token": token, "Content-Type": "application/json" },
+    body: JSON.stringify({ endCountryCode: countryCode, products: [{ quantity, vid }] }),
+  });
+  const data = await res.json();
+
+  return jsonResponse({
+    ok: true,
+    freight: (data.data || []).map((f: any) => ({
+      logisticName: f.logisticName,
+      estimatedDays: f.logisticAging,
+      cost: f.logisticPrice,
+      currency: f.logisticPriceCurrency || "USD",
+    })),
+  });
 }
 
 // ==================== LISTINGS ====================

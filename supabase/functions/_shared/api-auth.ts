@@ -11,7 +11,7 @@ export interface ApiContext {
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-api-key, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
 };
 
@@ -38,12 +38,24 @@ export async function authenticateRequest(req: Request): Promise<ApiContext | Re
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, supabaseKey);
 
+  // Support both X-API-Key header and Authorization: Bearer
+  const xApiKey = req.headers.get("X-API-Key");
   const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return errorResponse("Missing or invalid Authorization header", 401, "UNAUTHORIZED");
+  
+  let token: string | null = null;
+  if (xApiKey) {
+    token = xApiKey;
+  } else if (authHeader?.startsWith("Bearer ")) {
+    const bearerToken = authHeader.slice(7);
+    // Skip JWT tokens (they contain dots) - only accept API keys
+    if (!bearerToken.includes(".")) {
+      token = bearerToken;
+    }
   }
 
-  const token = authHeader.slice(7);
+  if (!token) {
+    return errorResponse("Missing API key. Use X-API-Key header or Authorization: Bearer <api-key>", 401, "UNAUTHORIZED");
+  }
   
   // Hash the token
   const encoder = new TextEncoder();
@@ -52,12 +64,16 @@ export async function authenticateRequest(req: Request): Promise<ApiContext | Re
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
+  console.log("Looking up key hash:", keyHash, "token length:", token.length);
+
   // Look up key
   const { data: apiKey, error } = await supabase
     .from("api_keys")
     .select("id, seller_id, is_active, name")
     .eq("key_hash", keyHash)
     .maybeSingle();
+
+  console.log("Key lookup result:", apiKey ? `found: ${apiKey.name}` : "not found", "error:", error?.message);
 
   if (error || !apiKey) {
     return errorResponse("Invalid API key", 401, "UNAUTHORIZED");

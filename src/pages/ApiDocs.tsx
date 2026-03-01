@@ -120,6 +120,41 @@ Bei Failure: 3 Retries mit exponential Backoff (30s, 120s, 480s).`,
     ],
   },
   {
+    section: "Produkte (CJ Suche)",
+    description: "CJ Dropshipping Produktkatalog durchsuchen, Details abrufen und Versandkosten berechnen.",
+    items: [
+      {
+        method: "GET",
+        path: "/v1/products/search",
+        description: "CJ Produkte suchen",
+        params: `q = "Suchbegriff" (erforderlich)
+page = 1             // optional, Seitennummer
+limit = 20           // optional, Ergebnisse pro Seite
+country = "DE"       // optional, Lagerfilter
+category = "123"     // optional, CJ Kategorie-ID`,
+        response: `{ "ok": true, "products": [{ "pid": "...", "name": "...", "image": "...", "price": 4.99 }], "total": 150 }`,
+      },
+      {
+        method: "GET",
+        path: "/v1/products/:productId",
+        description: "Produktdetails mit Varianten abrufen",
+        response: `{ "ok": true, "product": { "pid": "...", "name": "...", "variants": [{ "vid": "...", "price": 3.99, "stock": 500 }] } }`,
+        notes: "Gibt alle Varianten mit vid (Varianten-ID) zurück. Die vid wird für Fulfillment und Listings benötigt.",
+      },
+      {
+        method: "POST",
+        path: "/v1/products/freight",
+        description: "Versandkosten für eine Variante berechnen",
+        body: `{
+  "vid": "variant-uuid",
+  "countryCode": "DE",   // optional, default: "DE"
+  "quantity": 1           // optional, default: 1
+}`,
+        response: `{ "ok": true, "freight": [{ "logisticName": "CJPacket", "estimatedDays": "10-15", "cost": 2.50 }] }`,
+      },
+    ],
+  },
+  {
     section: "Listings",
     description: "Produkte von CJ importieren und auf eBay listen.",
     items: [
@@ -202,7 +237,7 @@ function CopyButton({ text }: { text: string }) {
 function EndpointCard({ ep }: { ep: Endpoint }) {
   const [open, setOpen] = useState(false);
   const curlCmd = `curl -X ${ep.method} \\
-  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "X-API-Key: YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\${ep.body ? `
   -d '${ep.body.replace(/\n\s*/g, " ").trim()}' \\` : ""}
   ${BASE_URL}${ep.path}`;
@@ -281,13 +316,23 @@ const ApiDocsPage = () => {
         <div className="glass-card p-5 space-y-3">
           <h2 className="text-[15px] font-semibold text-foreground">Authentifizierung</h2>
           <p className="text-sm text-muted-foreground">
-            Alle Requests (außer <code className="text-xs bg-muted px-1.5 py-0.5 rounded">/v1/health</code>) benötigen:
+            Alle Requests (außer <code className="text-xs bg-muted px-1.5 py-0.5 rounded">/v1/health</code>) benötigen einen API Key.
+            Zwei Methoden werden unterstützt:
           </p>
-          <div className="flex items-center gap-2">
-            <pre className="text-xs bg-muted/50 rounded-lg px-3 py-2 font-mono text-foreground flex-1">
-              Authorization: Bearer YOUR_API_KEY
-            </pre>
-            <CopyButton text="Authorization: Bearer YOUR_API_KEY" />
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <pre className="text-xs bg-muted/50 rounded-lg px-3 py-2 font-mono text-foreground flex-1">
+                X-API-Key: YOUR_API_KEY
+              </pre>
+              <CopyButton text="X-API-Key: YOUR_API_KEY" />
+            </div>
+            <p className="text-xs text-muted-foreground">oder</p>
+            <div className="flex items-center gap-2">
+              <pre className="text-xs bg-muted/50 rounded-lg px-3 py-2 font-mono text-foreground flex-1">
+                Authorization: Bearer YOUR_API_KEY
+              </pre>
+              <CopyButton text="Authorization: Bearer YOUR_API_KEY" />
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
             <div className="bg-muted/30 rounded-xl p-3">
@@ -307,9 +352,17 @@ const ApiDocsPage = () => {
 
         {/* Workflow */}
         <div className="glass-card p-5 space-y-3">
-          <h2 className="text-[15px] font-semibold text-foreground">Typischer Workflow</h2>
+          <h2 className="text-[15px] font-semibold text-foreground">Workflow A: Produkt finden & listen</h2>
           <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
-            <li><strong>SKU Mapping anlegen</strong> – Verknüpfe eBay SKUs mit CJ Varianten via <code className="text-xs bg-muted px-1 rounded">POST /v1/sku-map</code></li>
+            <li><strong>Produkt suchen</strong> – <code className="text-xs bg-muted px-1 rounded">GET /v1/products/search?q=handwärmer</code></li>
+            <li><strong>Details & Varianten abrufen</strong> – <code className="text-xs bg-muted px-1 rounded">GET /v1/products/:pid</code></li>
+            <li><strong>Versandkosten prüfen</strong> – <code className="text-xs bg-muted px-1 rounded">POST /v1/products/freight</code> mit vid</li>
+            <li><strong>Draft erstellen</strong> – <code className="text-xs bg-muted px-1 rounded">POST /v1/listings/prepare</code> mit cjVariantId</li>
+            <li><strong>Auf eBay listen</strong> – <code className="text-xs bg-muted px-1 rounded">POST /v1/listings/publish</code> mit Preis & Titel</li>
+            <li><strong>SKU Mapping anlegen</strong> – <code className="text-xs bg-muted px-1 rounded">POST /v1/sku-map</code> für Fulfillment-Verknüpfung</li>
+          </ol>
+          <h2 className="text-[15px] font-semibold text-foreground pt-3">Workflow B: Orders fulfillen</h2>
+          <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
             <li><strong>Orders synchronisieren</strong> – <code className="text-xs bg-muted px-1 rounded">POST /v1/orders/sync</code></li>
             <li><strong>Offene Orders abrufen</strong> – <code className="text-xs bg-muted px-1 rounded">GET /v1/orders?status=awaiting_fulfillment</code></li>
             <li><strong>Order fulfillen</strong> – <code className="text-xs bg-muted px-1 rounded">POST /v1/orders/:id/fulfill</code> → CJ Order wird erstellt</li>
