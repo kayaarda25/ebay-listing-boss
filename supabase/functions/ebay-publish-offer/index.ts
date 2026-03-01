@@ -105,6 +105,17 @@ Deno.serve(async (req) => {
 
         const itemId = xmlValue(xml, "ItemID");
 
+        if (!itemId) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              code: "EBAY_NO_ITEM_CREATED",
+              error: "eBay hat das Listing nicht erstellt. Mögliche Ursache: Kontoeinschränkungen (z.B. einbehaltene Zahlungen) oder fehlende Pflichtangaben. Bitte prüfe dein eBay-Konto und versuche es erneut.",
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
         await supabase.from('ebay_offers').update({
           listing_id: itemId,
           state: 'published',
