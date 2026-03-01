@@ -372,6 +372,15 @@ async function processTrackingSync(supabase: any, job: any): Promise<any> {
   return { updated: true, trackingNumber, carrier };
 }
 
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 async function processListingPublish(supabase: any, job: any): Promise<any> {
   const { offerId } = job.input;
 
@@ -387,13 +396,17 @@ async function processListingPublish(supabase: any, job: any): Promise<any> {
 
   const images = (sp?.images_json as string[]) || [];
   const description = sp?.description || offer.title || "";
-  const pictureXml = images.map((url: string) => `<PictureURL>${url}</PictureURL>`).join("\n");
+  const pictureXml = images.map((url: string) => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
+
+  // Escape title for XML (description goes into CDATA so it's safe)
+  const safeTitle = escapeXml((offer.title || "").substring(0, 80));
+  const safeSku = escapeXml(offer.sku || "");
 
   const xml = await ebayTradingCall({
     callName: "AddFixedPriceItem",
     body: `
       <Item>
-        <Title>${(offer.title || "").substring(0, 80)}</Title>
+        <Title>${safeTitle}</Title>
         <Description><![CDATA[${description}]]></Description>
         <PrimaryCategory><CategoryID>${offer.category_id || "175673"}</CategoryID></PrimaryCategory>
         <StartPrice currencyID="EUR">${offer.price}</StartPrice>
@@ -403,7 +416,7 @@ async function processListingPublish(supabase: any, job: any): Promise<any> {
         <Country>DE</Country>
         <Currency>EUR</Currency>
         <Site>Germany</Site>
-        <SKU>${offer.sku}</SKU>
+        <SKU>${safeSku}</SKU>
         <PictureDetails>${pictureXml}</PictureDetails>
         <ConditionID>1000</ConditionID>
         <DispatchTimeMax>3</DispatchTimeMax>
