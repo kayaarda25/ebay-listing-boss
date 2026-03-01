@@ -426,18 +426,18 @@ async function generateTitle(productName: string, apiKey?: string | null): Promi
         messages: [
           {
             role: "system",
-            content: `You are an eBay listing title optimizer. Generate a short, keyword-rich eBay title.
-Rules:
-- Max 80 characters
-- Structure: Main keyword + benefit + use case
-- No special characters except – and &
-- No brand names
-- English only
-- Return ONLY the title, nothing else`,
+            content: `Du bist ein eBay-Listing-Titel-Optimierer für den deutschen Markt. Erstelle einen kurzen, keyword-reichen eBay-Titel auf Deutsch.
+Regeln:
+- Max 80 Zeichen
+- Struktur: Hauptkeyword + Vorteil + Anwendung
+- Keine Sonderzeichen außer – und &
+- Keine Markennamen, verwende "Kompatibel mit..." oder lasse die Marke weg
+- NUR auf Deutsch
+- Antworte NUR mit dem Titel, nichts anderes`,
           },
           {
             role: "user",
-            content: `Generate an optimized eBay title for: ${productName}`,
+            content: `Erstelle einen optimierten deutschen eBay-Titel für: ${productName}`,
           },
         ],
       }),
@@ -470,25 +470,25 @@ async function generateDescription(productName: string, title: string, apiKey?: 
         messages: [
           {
             role: "system",
-            content: `You are an eBay product description writer. Generate a clear, persuasive product description.
+            content: `Du bist ein eBay-Produktbeschreibungs-Texter für den deutschen Markt. Erstelle eine klare, überzeugende Produktbeschreibung auf Deutsch.
 
-Structure:
-1. 🎯 Product Benefits (3-4 bullet points)
-2. 📦 How It Works (2-3 sentences)
-3. ❤️ Why Customers Love It (3 bullet points)
-4. 📋 Package Includes (list items)
+Struktur:
+1. 🎯 Produktvorteile (3-4 Aufzählungspunkte)
+2. 📦 So funktioniert es (2-3 Sätze)
+3. ❤️ Warum Kunden es lieben (3 Aufzählungspunkte)
+4. 📋 Lieferumfang (Liste)
 
-Rules:
-- Keep it under 500 words
-- Use HTML formatting (b, ul, li, br)
-- No brand names
-- Persuasive but honest tone
-- English only
-- Return ONLY the HTML description`,
+Regeln:
+- Maximal 500 Wörter
+- HTML-Formatierung verwenden (b, ul, li, br)
+- Keine Markennamen
+- Überzeugend aber ehrlich
+- NUR auf Deutsch
+- Antworte NUR mit der HTML-Beschreibung`,
           },
           {
             role: "user",
-            content: `Generate description for: ${title}\nOriginal product: ${productName}`,
+            content: `Erstelle eine deutsche Produktbeschreibung für: ${title}\nOriginalprodukt: ${productName}`,
           },
         ],
       }),
@@ -513,13 +513,13 @@ function cleanTitle(name: string): string {
 
 function buildFallbackDescription(productName: string, title: string): string {
   return `<b>${title}</b><br><br>
-<b>🎯 Product Benefits:</b><br>
+<b>🎯 Produktvorteile:</b><br>
 <ul>
-<li>High quality materials for long-lasting use</li>
-<li>Easy to use and maintain</li>
-<li>Perfect for everyday use</li>
+<li>Hochwertige Materialien für langlebige Nutzung</li>
+<li>Einfach zu verwenden und zu pflegen</li>
+<li>Perfekt für den täglichen Gebrauch</li>
 </ul><br>
-<b>📦 Package Includes:</b><br>
+<b>📦 Lieferumfang:</b><br>
 <ul><li>1x ${productName}</li></ul>`;
 }
 
