@@ -77,53 +77,21 @@ Deno.serve(async (req) => {
           .slice(0, 12);
         const pictureUrls = images.map(url => `<PictureURL>${escapeXml(url)}</PictureURL>`).join("\n");
 
-        let categoryId = offer.category_id || await suggestCategoryId(title);
-        if (!categoryId) {
-          return new Response(
-            JSON.stringify({ success: false, error: 'Keine gültige eBay-Kategorie gefunden. Bitte Kategorie manuell setzen.' }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
+        const categoryId = offer.category_id || suggestCategoryId(title);
 
         // Build item specifics from product attributes
         const attributes = (product?.attributes_json as Record<string, string>) || {};
         const itemSpecifics = buildItemSpecifics(attributes);
 
-        let xml: string;
-        try {
-          xml = await publishAuctionListing({
-            title,
-            description,
-            categoryId,
-            price: offer.price || 0,
-            sku: offer.sku,
-            pictureUrls,
-            itemSpecifics,
-          });
-        } catch (error) {
-          const errorMessage = String(error);
-          const shouldRetryWithSuggestedCategory = errorMessage.includes("Kategorie ist nicht gültig");
-
-          if (!shouldRetryWithSuggestedCategory) {
-            throw error;
-          }
-
-          const suggestedCategoryId = await suggestCategoryId(title);
-          if (!suggestedCategoryId || suggestedCategoryId === categoryId) {
-            throw error;
-          }
-
-          categoryId = suggestedCategoryId;
-          xml = await publishAuctionListing({
-            title,
-            description,
-            categoryId,
-            price: offer.price || 0,
-            sku: offer.sku,
-            pictureUrls,
-            itemSpecifics,
-          });
-        }
+        const xml = await publishAuctionListing({
+          title,
+          description,
+          categoryId,
+          price: offer.price || 0,
+          sku: offer.sku,
+          pictureUrls,
+          itemSpecifics,
+        });
 
         const itemId = xmlValue(xml, "ItemID");
 
@@ -252,19 +220,71 @@ async function publishAuctionListing({
   });
 }
 
-async function suggestCategoryId(title: string): Promise<string | null> {
-  try {
-    const xml = await ebayTradingCall({
-      callName: "GetSuggestedCategories",
-      body: `<Query>${escapeXml(title.substring(0, 80))}</Query>`,
-    });
+/** Keyword-based category mapping for eBay.de leaf categories.
+ *  Returns a best-guess leaf category ID based on product title keywords. */
+function suggestCategoryId(title: string): string {
+  const t = title.toLowerCase();
 
-    const suggestedCategoryId = xmlValue(xml, "CategoryID");
-    return suggestedCategoryId || null;
-  } catch (error) {
-    console.warn("GetSuggestedCategories failed:", String(error));
-    return null;
+  const categoryMap: [RegExp, string][] = [
+    // Electronics & Tech
+    [/laptop|notebook|computer|pc|desktop/, "177"],        // Notebooks & Netbooks
+    [/tablet|ipad/, "171485"],                              // Tablets & eBook-Reader
+    [/handy|smartphone|iphone|samsung galaxy/, "9355"],     // Handys & Smartphones
+    [/kopfhörer|headphone|earbuds|headset/, "112529"],      // Kopfhörer
+    [/kamera|camera|gopro/, "31388"],                        // Digitalkameras
+    [/fernseher|tv|monitor|bildschirm/, "11071"],           // Fernseher
+    [/drucker|printer/, "171941"],                           // Drucker
+    [/tastatur|keyboard|maus|mouse/, "33963"],              // Tastaturen & Keypads
+    [/lautsprecher|speaker|bluetooth.?speaker/, "112529"],  // Lautsprecher
+    [/usb|kabel|adapter|charger|ladegerät/, "67279"],       // Kabel & Adapter
+
+    // Home & Garden
+    [/lampe|licht|led|beleuchtung|ceiling|light/, "20710"], // Lampen & Licht
+    [/möbel|schrank|regal|tisch|stuhl|chair|desk|hocker|stool/, "38221"], // Möbel
+    [/garten|garden|pflanz|outdoor/, "159912"],             // Garten & Terrasse
+    [/küche|kitchen|kochtopf|pfanne/, "20625"],             // Kochen & Genießen
+    [/bad|bathroom|dusch|waschbecken/, "20599"],            // Badausstattung
+    [/bettwäsche|kissen|pillow|mattress|matratze/, "20469"],// Bettwäsche
+
+    // Fashion
+    [/kleidung|shirt|hose|jacke|mantel|dress|pullover/, "15724"], // Herrenbekleidung
+    [/schuh|shoe|sneaker|stiefel|boot/, "93427"],           // Herrenschuhe
+    [/uhr|watch/, "31387"],                                  // Armbanduhren
+    [/tasche|bag|rucksack|backpack/, "169291"],             // Reiseaccessoires
+
+    // Sport
+    [/sport|fitness|training|yoga|gym/, "888"],             // Fitness & Jogging
+    [/fahrrad|bike|cycling/, "7294"],                        // Radsport
+    [/camping|zelt|tent|wandern|hiking/, "16034"],          // Camping & Outdoor
+
+    // Toys & Hobby
+    [/spielzeug|toy|lego|playmobil/, "220"],                // Spielzeug
+    [/puzzle/, "2613"],                                      // Puzzles
+    [/modell|model.?kit|rc.?car/, "2562"],                  // Modellbau
+
+    // Pet
+    [/hund|dog|katze|cat|haustier|pet|reptil|terrarium/, "1281"], // Tierbedarf
+
+    // Health & Beauty
+    [/kosmetik|beauty|makeup|pflege|creme|shampoo|wax/, "26395"], // Gesundheit & Beauty
+    [/massage|wellness/, "36624"],                          // Massage
+
+    // Auto
+    [/auto|car|kfz|fahrzeug|reifen|felge/, "10063"],       // Auto-Ersatzteile
+
+    // Tools
+    [/werkzeug|tool|bohrer|schrauber|drill/, "631"],        // Werkzeuge
+    [/taschenlampe|flashlight|torch/, "631"],               // Werkzeuge
+  ];
+
+  for (const [pattern, categoryId] of categoryMap) {
+    if (pattern.test(t)) {
+      return categoryId;
+    }
   }
+
+  // Ultimate fallback: "Sonstige" under "Haushaltsgeräte" – valid leaf for auctions on eBay.de
+  return "20710";
 }
 
 /** Build <ItemSpecifics> XML from product attributes.
