@@ -189,12 +189,30 @@ const ProductSwipePage = () => {
     return () => window.removeEventListener("keydown", handler);
   }, [handleSwipe, handleSkip]);
 
-  const pb = current?.price_breakdown;
-  const netProfit = pb?.net_profit ?? (
-    current?.price && current?.purchase_price
-      ? Math.round((current.price - current.purchase_price - current.price * 0.2049 - 0.35) * 100) / 100
-      : null
-  );
+  // Calculate breakdown – use stored data or estimate from VK/EK
+  const breakdown = (() => {
+    const rawPb = current?.price_breakdown;
+    if (rawPb) return rawPb;
+    const vk = current?.price ?? 0;
+    const ek = current?.purchase_price ?? 0;
+    if (!vk) return null;
+    const shippingEst = 3.0;
+    const ebayFee = Math.round(vk * 0.13 * 100) / 100;
+    const promotedFee = Math.round(vk * 0.05 * 100) / 100;
+    const paypalFee = Math.round((vk * 0.0249 + 0.35) * 100) / 100;
+    const totalCosts = Math.round((ek + shippingEst + ebayFee + promotedFee + paypalFee) * 100) / 100;
+    const profit = Math.round((vk - totalCosts) * 100) / 100;
+    return {
+      purchase_price: ek,
+      shipping_cost: shippingEst,
+      ebay_fee: ebayFee,
+      promoted_fee: promotedFee,
+      paypal_fee: paypalFee,
+      total_costs: totalCosts,
+      selling_price: vk,
+      net_profit: profit,
+    } as PriceBreakdown;
+  })();
 
   const remainingCount = drafts.filter((d) => !seenIds.has(d.id)).length;
 
@@ -323,32 +341,32 @@ const ProductSwipePage = () => {
                 <div className="bg-muted/50 rounded-lg p-3 space-y-1.5 text-[13px]">
                   <div className="flex justify-between text-muted-foreground">
                     <span>EK (CJ)</span>
-                    <span className="font-mono">{pb ? `€${pb.purchase_price.toFixed(2)}` : current.purchase_price != null ? `€${current.purchase_price.toFixed(2)}` : "–"}</span>
+                    <span className="font-mono">{breakdown ? `€${breakdown.purchase_price.toFixed(2)}` : "–"}</span>
                   </div>
                   <div className="flex justify-between text-muted-foreground">
                     <span>Versand</span>
-                    <span className="font-mono">{pb ? `€${pb.shipping_cost.toFixed(2)}` : "–"}</span>
+                    <span className="font-mono">{breakdown ? `€${breakdown.shipping_cost.toFixed(2)}` : "–"}{!current.price_breakdown && breakdown ? " *" : ""}</span>
                   </div>
                   <div className="flex justify-between text-muted-foreground">
                     <span>eBay Gebühr (13%)</span>
-                    <span className="font-mono">{pb ? `€${pb.ebay_fee.toFixed(2)}` : "–"}</span>
+                    <span className="font-mono">{breakdown ? `€${breakdown.ebay_fee.toFixed(2)}` : "–"}</span>
                   </div>
                   <div className="flex justify-between text-muted-foreground">
                     <span>Basis-Anzeige (5%)</span>
-                    <span className="font-mono">{pb ? `€${pb.promoted_fee.toFixed(2)}` : "–"}</span>
+                    <span className="font-mono">{breakdown ? `€${breakdown.promoted_fee.toFixed(2)}` : "–"}</span>
                   </div>
                   <div className="flex justify-between text-muted-foreground">
                     <span>PayPal (2.49% + €0.35)</span>
-                    <span className="font-mono">{pb ? `€${pb.paypal_fee.toFixed(2)}` : "–"}</span>
+                    <span className="font-mono">{breakdown ? `€${breakdown.paypal_fee.toFixed(2)}` : "–"}</span>
                   </div>
                   <div className="border-t border-border/60 my-1" />
                   <div className="flex justify-between font-semibold text-foreground">
                     <span>VK</span>
                     <span className="font-mono">{current.price != null ? `€${current.price.toFixed(2)}` : "–"}</span>
                   </div>
-                  <div className={`flex justify-between font-bold ${netProfit != null && netProfit > 0 ? "text-[hsl(var(--success))]" : "text-destructive"}`}>
+                  <div className={`flex justify-between font-bold ${breakdown && breakdown.net_profit > 0 ? "text-[hsl(var(--success))]" : "text-destructive"}`}>
                     <span>Profit</span>
-                    <span className="font-mono">{netProfit != null ? `€${netProfit.toFixed(2)}` : "–"}</span>
+                    <span className="font-mono">{breakdown ? `€${breakdown.net_profit.toFixed(2)}` : "–"}</span>
                   </div>
                   {current.warehouse && (
                     <div className="flex justify-between text-muted-foreground text-[11px] pt-1">
