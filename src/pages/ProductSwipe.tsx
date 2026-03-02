@@ -33,7 +33,7 @@ interface DraftOffer {
 const ProductSwipePage = () => {
   const { sellerId } = useAuth();
   const queryClient = useQueryClient();
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
   const [swiping, setSwiping] = useState<"left" | "right" | null>(null);
   const [acting, setActing] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
@@ -88,13 +88,14 @@ const ProductSwipePage = () => {
     enabled: !!sellerId,
   });
 
-  const current = drafts[currentIndex];
+  // Find first draft not yet seen/acted on
+  const current = drafts.find((d) => !seenIds.has(d.id));
 
   const handleSkip = useCallback(() => {
-    if (acting) return;
+    if (acting || !current) return;
     setImgIndex(0);
-    setCurrentIndex((i) => i + 1);
-  }, [acting]);
+    setSeenIds((s) => new Set(s).add(current.id));
+  }, [acting, current]);
 
   const handleSwipe = useCallback(
     async (direction: "left" | "right") => {
@@ -123,7 +124,7 @@ const ProductSwipePage = () => {
         await new Promise((r) => setTimeout(r, 350));
         setSwiping(null);
         setImgIndex(0);
-        setCurrentIndex((i) => i + 1);
+        setSeenIds((s) => new Set(s).add(current.id));
         queryClient.invalidateQueries({ queryKey: ["draft-offers"] });
         queryClient.invalidateQueries({ queryKey: ["listings"] });
       } catch (err: any) {
@@ -147,7 +148,7 @@ const ProductSwipePage = () => {
         .eq("id", lastId);
       if (error) throw error;
       setHistory((h) => h.slice(0, -1));
-      setCurrentIndex((i) => Math.max(0, i - 1));
+      setSeenIds((s) => { const ns = new Set(s); ns.delete(lastId); return ns; });
       setImgIndex(0);
       toast("Rückgängig gemacht", { icon: "↩️" });
       queryClient.invalidateQueries({ queryKey: ["draft-offers"] });
@@ -180,7 +181,7 @@ const ProductSwipePage = () => {
         ).toFixed(0)
       : null;
 
-  const remainingCount = Math.max(0, drafts.length - currentIndex);
+  const remainingCount = drafts.filter((d) => !seenIds.has(d.id)).length;
 
   return (
     <DashboardLayout>
@@ -283,7 +284,7 @@ const ProductSwipePage = () => {
                     </>
                   )}
                   <div className="absolute top-3 right-3 bg-background/80 backdrop-blur-sm text-foreground text-xs font-semibold px-3 py-1 rounded-full">
-                    {currentIndex + 1} / {drafts.length}
+                    {drafts.length - remainingCount + 1} / {drafts.length}
                   </div>
                 </div>
               ) : (
