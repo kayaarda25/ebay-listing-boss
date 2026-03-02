@@ -136,7 +136,16 @@ const ProductSwipePage = () => {
             .delete()
             .eq("id", current.id);
           if (error) throw error;
-          toast("Produkt gelöscht", { icon: "🗑️" });
+
+          // Also delete source_product, sku_map, inventory for this SKU
+          if (sellerId) {
+            await Promise.all([
+              supabase.from("source_products").delete().eq("seller_id", sellerId).eq("source_id", current.sku),
+              supabase.from("sku_map").delete().eq("seller_id", sellerId).eq("ebay_sku", current.sku),
+              supabase.from("ebay_inventory_items").delete().eq("seller_id", sellerId).eq("sku", current.sku),
+            ]);
+          }
+          toast("Produkt komplett gelöscht", { icon: "🗑️" });
         }
         setHistory((h) => [...h, current.id]);
 
@@ -146,6 +155,7 @@ const ProductSwipePage = () => {
         setSeenIds((s) => new Set(s).add(current.id));
         queryClient.invalidateQueries({ queryKey: ["draft-offers"] });
         queryClient.invalidateQueries({ queryKey: ["listings"] });
+        queryClient.invalidateQueries({ queryKey: ["products"] });
       } catch (err: any) {
         toast.error(err.message || "Fehler");
         setSwiping(null);
