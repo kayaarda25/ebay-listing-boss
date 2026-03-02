@@ -113,10 +113,10 @@ const ProductSwipePage = () => {
         } else {
           const { error } = await supabase
             .from("ebay_offers")
-            .update({ state: "rejected" })
+            .delete()
             .eq("id", current.id);
           if (error) throw error;
-          toast("Produkt abgelehnt", { icon: "❌" });
+          toast("Produkt gelöscht", { icon: "🗑️" });
         }
         setHistory((h) => [...h, current.id]);
 
