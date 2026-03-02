@@ -158,12 +158,12 @@ const ProductSwipePage = () => {
     }
   }, [history, acting, queryClient]);
 
-  // Keyboard support
+  // Keyboard support — use distinct keys so arrow keys don't conflict with image nav
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") handleSwipe("left");
-      if (e.key === "ArrowRight") handleSwipe("right");
-      if (e.key === "ArrowDown") {
+      if (e.key === "a" || e.key === "A") handleSwipe("left");
+      if (e.key === "d" || e.key === "D") handleSwipe("right");
+      if (e.key === "s" || e.key === "S" || e.key === "ArrowDown") {
         e.preventDefault();
         handleSkip();
       }
@@ -245,22 +245,24 @@ const ProductSwipePage = () => {
                   />
                   {current.images.length > 1 && (
                     <>
-                      <button
-                        onClick={() =>
+                       <button
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setImgIndex((i) =>
                             i > 0 ? i - 1 : current.images.length - 1
-                          )
-                        }
+                          );
+                        }}
                         className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-background/80 backdrop-blur-sm hover:bg-background transition-colors shadow-sm"
                       >
                         <ChevronLeft className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() =>
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setImgIndex((i) =>
                             i < current.images.length - 1 ? i + 1 : 0
-                          )
-                        }
+                          );
+                        }}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-background/80 backdrop-blur-sm hover:bg-background transition-colors shadow-sm"
                       >
                         <ChevronRight className="w-4 h-4" />
@@ -377,7 +379,7 @@ const ProductSwipePage = () => {
                 </div>
 
                 <p className="text-center text-[11px] text-muted-foreground/60">
-                  ← Ablehnen &nbsp;·&nbsp; → Genehmigen &nbsp;·&nbsp; ↓
+                  A = Ablehnen &nbsp;·&nbsp; D = Genehmigen &nbsp;·&nbsp; S =
                   Überspringen
                 </p>
               </div>
