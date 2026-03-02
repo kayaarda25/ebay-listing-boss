@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
       if (!settings?.autopilot_active) continue;
 
       const lastRun = settings.autopilot_last_run ? new Date(settings.autopilot_last_run).getTime() : 0;
-      const intervalMs = (settings.autopilot_interval_min || 5) * 60 * 1000;
+      const intervalMs = (settings.autopilot_interval_min || 30) * 60 * 1000;
       
       if (Date.now() - lastRun < intervalMs) continue;
 
