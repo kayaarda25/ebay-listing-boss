@@ -15,6 +15,7 @@ import {
   Bot,
   Search,
   FileText,
+  Heart,
 } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "@/hooks/useTheme";
@@ -27,6 +28,7 @@ const navItems = [
   { path: "/orders", label: "Orders", icon: ShoppingCart },
   { path: "/autopilot", label: "Autopilot", icon: Bot },
   { path: "/discovery", label: "Discovery", icon: Search },
+  { path: "/swipe", label: "Prüfung", icon: Heart },
   { path: "/reports", label: "Reports", icon: FileText },
   { path: "/logs", label: "Logs", icon: ScrollText },
   { path: "/settings", label: "Settings", icon: Settings },
