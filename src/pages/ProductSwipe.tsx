@@ -2,7 +2,7 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import {
   ThumbsDown,
@@ -50,6 +50,9 @@ const ProductSwipePage = () => {
   const [acting, setActing] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [imgIndex, setImgIndex] = useState(0);
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [priceInput, setPriceInput] = useState("");
+  const priceInputRef = useRef<HTMLInputElement>(null);
 
   const { data: drafts = [], isLoading } = useQuery({
     queryKey: ["draft-offers", sellerId],
@@ -360,9 +363,43 @@ const ProductSwipePage = () => {
                     <span className="font-mono">{breakdown ? `€${breakdown.paypal_fee.toFixed(2)}` : "–"}</span>
                   </div>
                   <div className="border-t border-border/60 my-1" />
-                  <div className="flex justify-between font-semibold text-foreground">
+                  <div className="flex justify-between items-center font-semibold text-foreground">
                     <span>VK</span>
-                    <span className="font-mono">{current.price != null ? `€${current.price.toFixed(2)}` : "–"}</span>
+                    {editingPrice ? (
+                      <input
+                        ref={priceInputRef}
+                        type="number"
+                        step="0.01"
+                        value={priceInput}
+                        onChange={(e) => setPriceInput(e.target.value)}
+                        onBlur={async () => {
+                          const val = parseFloat(priceInput);
+                          if (!isNaN(val) && val > 0 && current) {
+                            await supabase.from("ebay_offers").update({ price: val }).eq("id", current.id);
+                            queryClient.invalidateQueries({ queryKey: ["draft-offers"] });
+                            toast.success(`VK auf €${val.toFixed(2)} geändert`);
+                          }
+                          setEditingPrice(false);
+                        }}
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                          if (e.key === "Escape") setEditingPrice(false);
+                        }}
+                        className="w-24 text-right font-mono bg-background border border-border rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setPriceInput(current.price?.toFixed(2) || "0");
+                          setEditingPrice(true);
+                          setTimeout(() => priceInputRef.current?.select(), 50);
+                        }}
+                        className="font-mono hover:text-primary transition-colors cursor-pointer underline decoration-dashed underline-offset-4"
+                      >
+                        {current.price != null ? `€${current.price.toFixed(2)}` : "–"}
+                      </button>
+                    )}
                   </div>
                   <div className={`flex justify-between font-bold ${breakdown && breakdown.net_profit > 0 ? "text-[hsl(var(--success))]" : "text-destructive"}`}>
                     <span>Profit</span>
