@@ -29,6 +29,17 @@ const SEARCH_QUERIES = [
 const MIN_PRICE = 1;
 const MAX_PRICE = 50;
 const MIN_IMAGES = 1;
+
+// Blocked categories: clothing, fashion, apparel
+const BLOCKED_KEYWORDS = [
+  "dress", "shirt", "blouse", "skirt", "pants", "trousers", "jeans",
+  "jacket", "coat", "sweater", "hoodie", "t-shirt", "tshirt", "top",
+  "legging", "shorts", "underwear", "bra", "lingerie", "sock",
+  "clothing", "apparel", "fashion", "garment", "outfit", "costume",
+  "romper", "jumpsuit", "cardigan", "vest", "blazer", "suit",
+  "kleid", "hemd", "bluse", "rock", "hose", "jacke", "mantel",
+  "pullover", "unterwäsche", "bekleidung", "mode",
+];
 const TARGET_PROFIT = 15; // €15 target profit per product
 const MAX_PROFIT = 20;    // €20 cap
 const EBAY_FEE_PCT = 0.13;       // 13% eBay final value fee
@@ -145,6 +156,13 @@ Deno.serve(async (req) => {
             // Skip removed/invalid products
             if (p.productStatus && !["VALID", "ON_SALE", "IN_STOCK"].includes(p.productStatus)) {
               console.log(`Skipping removed/invalid product ${p.pid}: status=${p.productStatus}`);
+              continue;
+            }
+
+            // Skip clothing/fashion products
+            const nameLower = (p.productNameEn || p.productName || "").toLowerCase();
+            if (BLOCKED_KEYWORDS.some(kw => nameLower.includes(kw))) {
+              console.log(`Skipping clothing product: ${nameLower.substring(0, 50)}`);
               continue;
             }
 
