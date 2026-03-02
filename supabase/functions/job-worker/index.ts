@@ -66,25 +66,26 @@ Deno.serve(async (req) => {
       
       if (Date.now() - lastRun < intervalMs) continue;
 
-      // Queue individual phase jobs instead of one long cycle to avoid timeouts
-      const { data: existingPhase } = await supabase
+      // Check for ANY existing autopilot jobs (queued OR running) - count-based to be robust
+      const { count: existingCount } = await supabase
         .from("jobs")
-        .select("id")
+        .select("id", { count: "exact", head: true })
         .eq("seller_id", seller.id)
-        .in("type", ["autopilot_cycle", "autopilot_discovery", "autopilot_listings", "autopilot_order_sync", "autopilot_fulfillment", "autopilot_tracking", "autopilot_optimize"])
-        .in("state", ["queued", "running"])
-        .limit(1)
-        .maybeSingle();
+        .eq("type", "autopilot_cycle")
+        .in("state", ["queued", "running"]);
 
-      if (!existingPhase) {
-        // Queue phase 1: discovery, then chain the rest
-        await supabase.from("jobs").insert({
-          seller_id: seller.id,
-          type: "autopilot_cycle",
-          input: { phase: "discovery", workflows: settings.autopilot_workflows || ["discovery", "listings", "order_sync", "fulfillment", "tracking", "optimize"], auto: true },
-          state: "queued",
-        });
+      if ((existingCount || 0) > 0) {
+        console.log(`Seller ${seller.id}: ${existingCount} autopilot jobs already queued/running, skipping`);
+        continue;
       }
+
+      // Queue phase 1: discovery, then chain the rest
+      await supabase.from("jobs").insert({
+        seller_id: seller.id,
+        type: "autopilot_cycle",
+        input: { phase: "discovery", workflows: settings.autopilot_workflows || ["discovery", "listings", "order_sync", "fulfillment", "tracking", "optimize"], auto: true },
+        state: "queued",
+      });
 
       // Update last run timestamp
       await supabase.from("sellers").update({
@@ -573,7 +574,7 @@ async function processAutopilotCycle(supabase: any, job: any): Promise<any> {
               .eq("seller_id", sellerId)
               .eq("state", "draft")
               .is("listing_id", null)
-              .limit(5); // Reduced to avoid timeout
+              .limit(10);
 
             let listed = 0;
             let listErrors = 0;
@@ -589,20 +590,7 @@ async function processAutopilotCycle(supabase: any, job: any): Promise<any> {
             }
             stats.gelistet = (stats.gelistet || 0) + listed;
             if (listErrors > 0) stats.listing_fehler = (stats.listing_fehler || 0) + listErrors;
-
-            // If there are more drafts, queue another listings phase
-            const { data: moreDrafts } = await supabase
-              .from("ebay_offers")
-              .select("id")
-              .eq("seller_id", sellerId)
-              .eq("state", "draft")
-              .is("listing_id", null)
-              .limit(1);
-
-            if (moreDrafts && moreDrafts.length > 0) {
-              nextPhase = "listings"; // continue listing more
-              break;
-            }
+            // Remaining drafts will be picked up in the next autopilot cycle
           } catch (err) {
             errors.push(`Listings: ${String(err)}`);
           }
