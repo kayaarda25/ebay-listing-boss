@@ -29,8 +29,13 @@ const SEARCH_QUERIES = [
 const MIN_PRICE = 1;
 const MAX_PRICE = 50;
 const MIN_IMAGES = 1;
-const PRICE_MULTIPLIER = 2.5;
-const MIN_MARGIN_PCT = 40;
+const TARGET_PROFIT = 15; // €15 target profit per product
+const MAX_PROFIT = 20;    // €20 cap
+const EBAY_FEE_PCT = 0.13;       // 13% eBay final value fee
+const PROMOTED_FEE_PCT = 0.05;   // 5% Basis-Anzeige (promoted listing)
+const PAYPAL_FEE_PCT = 0.0249;   // 2.49% PayPal
+const PAYPAL_FEE_FIXED = 0.35;   // €0.35 PayPal fixed
+const TOTAL_FEE_PCT = EBAY_FEE_PCT + PROMOTED_FEE_PCT + PAYPAL_FEE_PCT; // 20.49%
 const DAILY_LISTING_TARGET = 100;
 
 interface DiscoveredProduct {
@@ -250,13 +255,17 @@ Deno.serve(async (req) => {
         // Generate description
         const description = await generateDescription(product.name, optimizedTitle, LOVABLE_API_KEY);
 
-        // Calculate selling price
-        const totalCost = product.price + product.shippingCost;
-        let sellingPrice = totalCost * PRICE_MULTIPLIER;
+        // Calculate selling price: VK = (EK + Versand + PayPal-Fix + Profit) / (1 - Gebühren%)
+        const baseCost = product.price + product.shippingCost + PAYPAL_FEE_FIXED;
+        let profit = TARGET_PROFIT;
+        let sellingPrice = (baseCost + profit) / (1 - TOTAL_FEE_PCT);
         
-        // Ensure minimum margin
-        const minPrice = totalCost / (1 - MIN_MARGIN_PCT / 100);
-        if (sellingPrice < minPrice) sellingPrice = minPrice;
+        // Cap profit at MAX_PROFIT
+        const actualProfit = sellingPrice - baseCost - (sellingPrice * TOTAL_FEE_PCT);
+        if (actualProfit > MAX_PROFIT) {
+          profit = MAX_PROFIT;
+          sellingPrice = (baseCost + profit) / (1 - TOTAL_FEE_PCT);
+        }
         
         // Round to .99
         sellingPrice = Math.floor(sellingPrice) + 0.99;
@@ -288,6 +297,16 @@ Deno.serve(async (req) => {
               eu_tags: euTags,
               discovery_date: new Date().toISOString(),
               auto_discovered: true,
+              price_breakdown: {
+                purchase_price: product.price,
+                shipping_cost: product.shippingCost,
+                ebay_fee: Math.round(sellingPrice * EBAY_FEE_PCT * 100) / 100,
+                promoted_fee: Math.round(sellingPrice * PROMOTED_FEE_PCT * 100) / 100,
+                paypal_fee: Math.round((sellingPrice * PAYPAL_FEE_PCT + PAYPAL_FEE_FIXED) * 100) / 100,
+                total_costs: Math.round((product.price + product.shippingCost + sellingPrice * TOTAL_FEE_PCT + PAYPAL_FEE_FIXED) * 100) / 100,
+                selling_price: sellingPrice,
+                net_profit: Math.round((sellingPrice - product.price - product.shippingCost - sellingPrice * TOTAL_FEE_PCT - PAYPAL_FEE_FIXED) * 100) / 100,
+              },
             },
           }, { onConflict: "seller_id,source_id" })
           .select("id")
@@ -304,7 +323,7 @@ Deno.serve(async (req) => {
           ebay_sku: product.pid,
           cj_variant_id: variantId,
           default_qty: 1,
-          min_margin_pct: MIN_MARGIN_PCT,
+          min_margin_pct: 20,
           active: true,
         }, { onConflict: "seller_id,ebay_sku" });
 

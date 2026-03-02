@@ -10,13 +10,23 @@ import {
   ExternalLink,
   Loader2,
   Package,
-  Euro,
   TrendingUp,
   SkipForward,
   Undo2,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+
+interface PriceBreakdown {
+  purchase_price: number;
+  shipping_cost: number;
+  ebay_fee: number;
+  promoted_fee: number;
+  paypal_fee: number;
+  total_costs: number;
+  selling_price: number;
+  net_profit: number;
+}
 
 interface DraftOffer {
   id: string;
@@ -28,6 +38,8 @@ interface DraftOffer {
   images: string[];
   description: string | null;
   source_type: string | null;
+  price_breakdown: PriceBreakdown | null;
+  warehouse: string | null;
 }
 
 const ProductSwipePage = () => {
@@ -55,10 +67,12 @@ const ProductSwipePage = () => {
       for (const o of offers || []) {
         const { data: sp } = await supabase
           .from("source_products")
-          .select("title, description, images_json, price_source, source_type")
+          .select("title, description, images_json, price_source, source_type, attributes_json")
           .eq("seller_id", sellerId)
           .eq("source_id", o.sku)
           .maybeSingle();
+
+        const attrs = sp?.attributes_json as any;
 
         let images: string[] = [];
         if (sp?.images_json) {
@@ -81,6 +95,8 @@ const ProductSwipePage = () => {
           images: images.slice(0, 5),
           description: sp?.description || null,
           source_type: sp?.source_type || null,
+          price_breakdown: attrs?.price_breakdown || null,
+          warehouse: attrs?.warehouse || null,
         });
       }
       return enriched;
@@ -173,13 +189,12 @@ const ProductSwipePage = () => {
     return () => window.removeEventListener("keydown", handler);
   }, [handleSwipe, handleSkip]);
 
-  const margin =
+  const pb = current?.price_breakdown;
+  const netProfit = pb?.net_profit ?? (
     current?.price && current?.purchase_price
-      ? (
-          ((current.price - current.purchase_price) / current.price) *
-          100
-        ).toFixed(0)
-      : null;
+      ? Math.round((current.price - current.purchase_price - current.price * 0.2049 - 0.35) * 100) / 100
+      : null
+  );
 
   const remainingCount = drafts.filter((d) => !seenIds.has(d.id)).length;
 
@@ -304,35 +319,41 @@ const ProductSwipePage = () => {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  {current.purchase_price != null && (
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Euro className="w-4 h-4" />
-                      <span className="text-sm">
-                        EK:{" "}
-                        <span className="font-mono font-semibold">
-                          €{current.purchase_price.toFixed(2)}
-                        </span>
-                      </span>
-                    </div>
-                  )}
-                  {current.price != null && (
-                    <div className="flex items-center gap-1.5 text-foreground">
-                      <Euro className="w-4 h-4" />
-                      <span className="text-sm font-semibold">
-                        VK:{" "}
-                        <span className="font-mono">
-                          €{current.price.toFixed(2)}
-                        </span>
-                      </span>
-                    </div>
-                  )}
-                  {margin && (
-                    <div className="flex items-center gap-1 text-sm">
-                      <TrendingUp className="w-3.5 h-3.5 text-[hsl(var(--success))]" />
-                      <span className="font-semibold text-[hsl(var(--success))]">
-                        {margin}% Marge
-                      </span>
+                {/* Price Breakdown */}
+                <div className="bg-muted/50 rounded-lg p-3 space-y-1.5 text-[13px]">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>EK (CJ)</span>
+                    <span className="font-mono">{pb ? `€${pb.purchase_price.toFixed(2)}` : current.purchase_price != null ? `€${current.purchase_price.toFixed(2)}` : "–"}</span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Versand</span>
+                    <span className="font-mono">{pb ? `€${pb.shipping_cost.toFixed(2)}` : "–"}</span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>eBay Gebühr (13%)</span>
+                    <span className="font-mono">{pb ? `€${pb.ebay_fee.toFixed(2)}` : "–"}</span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Basis-Anzeige (5%)</span>
+                    <span className="font-mono">{pb ? `€${pb.promoted_fee.toFixed(2)}` : "–"}</span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>PayPal (2.49% + €0.35)</span>
+                    <span className="font-mono">{pb ? `€${pb.paypal_fee.toFixed(2)}` : "–"}</span>
+                  </div>
+                  <div className="border-t border-border/60 my-1" />
+                  <div className="flex justify-between font-semibold text-foreground">
+                    <span>VK</span>
+                    <span className="font-mono">{current.price != null ? `€${current.price.toFixed(2)}` : "–"}</span>
+                  </div>
+                  <div className={`flex justify-between font-bold ${netProfit != null && netProfit > 0 ? "text-[hsl(var(--success))]" : "text-destructive"}`}>
+                    <span>Profit</span>
+                    <span className="font-mono">{netProfit != null ? `€${netProfit.toFixed(2)}` : "–"}</span>
+                  </div>
+                  {current.warehouse && (
+                    <div className="flex justify-between text-muted-foreground text-[11px] pt-1">
+                      <span>Lager</span>
+                      <span className="font-mono">{current.warehouse}</span>
                     </div>
                   )}
                 </div>
