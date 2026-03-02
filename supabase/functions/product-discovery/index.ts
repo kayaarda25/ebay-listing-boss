@@ -103,7 +103,7 @@ Deno.serve(async (req) => {
 
       try {
         // Search CJ with EU country filter
-        for (const country of ["DE", "PL", "FR", "ES", "GB", "CN"]) {
+        for (const country of ["CN", "CN", "CN", "CN", "DE", "PL"]) {
           if (discovered.length >= maxProducts) break;
 
           const searchUrl = new URL(`${CJ_BASE}/product/list`);
@@ -381,7 +381,7 @@ function calculateScore(product: any, price: number, shippingCost: number, wareh
   score += Math.max(0, 40 - price); // up to 40 points
 
   // Prefer EU core warehouses
-  const warehouseScores: Record<string, number> = { CN: 35, DE: 30, PL: 25, CZ: 22, FR: 20, ES: 18, GB: 18 };
+  const warehouseScores: Record<string, number> = { CN: 50, DE: 25, PL: 20, CZ: 18, FR: 15, ES: 12, GB: 12 };
   score += warehouseScores[warehouse] || 10;
 
   // Prefer lower shipping
