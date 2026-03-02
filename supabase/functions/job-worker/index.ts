@@ -568,11 +568,12 @@ async function processAutopilotCycle(supabase: any, job: any): Promise<any> {
       case "listings": {
         if (workflows.includes("listings")) {
           try {
+            // Only publish APPROVED drafts (user approved via swipe)
             const { data: drafts } = await supabase
               .from("ebay_offers")
               .select("id, title, sku")
               .eq("seller_id", sellerId)
-              .eq("state", "draft")
+              .eq("state", "approved")
               .is("listing_id", null)
               .limit(10);
 
