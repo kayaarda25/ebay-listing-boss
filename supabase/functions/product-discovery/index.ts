@@ -26,9 +26,9 @@ const SEARCH_QUERIES = [
   "massage tools", "smart home",
 ];
 
-const MIN_PRICE = 1;
-const MAX_PRICE = 50;
-const MIN_IMAGES = 1;
+const MIN_PRICE = 2;
+const MAX_PRICE = 35;
+const MIN_IMAGES = 3;
 
 // Blocked categories: clothing, fashion, apparel
 const BLOCKED_KEYWORDS = [
@@ -47,7 +47,7 @@ const PROMOTED_FEE_PCT = 0.05;   // 5% Basis-Anzeige (promoted listing)
 const PAYPAL_FEE_PCT = 0.0249;   // 2.49% PayPal
 const PAYPAL_FEE_FIXED = 0.35;   // €0.35 PayPal fixed
 const TOTAL_FEE_PCT = EBAY_FEE_PCT + PROMOTED_FEE_PCT + PAYPAL_FEE_PCT; // 20.49%
-const DAILY_LISTING_TARGET = 100;
+const DAILY_LISTING_TARGET = 20;
 
 interface DiscoveredProduct {
   pid: string;
@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const sellerId = body.sellerId;
-    const maxProducts = body.maxProducts || 20;
+    const maxProducts = body.maxProducts || 10;
     const queries = body.queries || SEARCH_QUERIES;
     const skipListing = body.skipListing || false;
 
@@ -118,8 +118,8 @@ Deno.serve(async (req) => {
       if (discovered.length >= maxProducts) break;
 
       try {
-        // Search CJ with EU country filter
-        for (const country of ["CN", "CN", "CN", "CN", "DE", "PL"]) {
+        // Search CJ - China warehouse only
+        for (const country of ["CN"]) {
           if (discovered.length >= maxProducts) break;
 
           const searchUrl = new URL(`${CJ_BASE}/product/list`);
@@ -332,10 +332,8 @@ Deno.serve(async (req) => {
         // Round to .99
         sellingPrice = Math.floor(sellingPrice) + 0.99;
 
-        // EU shipping tags
-        const euTags = EU_COUNTRIES.includes(product.warehouse)
-          ? ["Fast EU Shipping", "Delivery 3-7 Days", "EU Warehouse"]
-          : [];
+        // No EU tags - CN warehouse only
+        const euTags: string[] = [];
 
         const variantId = product.variants[0]?.vid || product.pid;
 
@@ -458,23 +456,25 @@ Deno.serve(async (req) => {
 function calculateScore(product: any, price: number, shippingCost: number, warehouse: string): number {
   let score = 0;
 
-  // Prefer lower cost (higher margin potential)
-  score += Math.max(0, 40 - price); // up to 40 points
-
-  // Prefer EU core warehouses
-  const warehouseScores: Record<string, number> = { CN: 50, DE: 25, PL: 20, CZ: 18, FR: 15, ES: 12, GB: 12 };
-  score += warehouseScores[warehouse] || 10;
+  // Sweet spot pricing: $5-20 range scores highest (not too cheap = junk, not too expensive)
+  if (price >= 5 && price <= 20) score += 30;
+  else if (price >= 3 && price <= 30) score += 15;
+  else score += 5;
 
   // Prefer lower shipping
   score += Math.max(0, 10 - shippingCost) * 2;
 
-  // Prefer products with many images
+  // Quality indicator: many images = well-presented product
   const imgCount = product.productImageSet?.length || 1;
-  score += Math.min(imgCount * 2, 16);
+  score += Math.min(imgCount * 3, 24);
 
-  // Prefer products with variants
+  // Prefer products with variants (more listing options)
   const variantCount = product.variants?.length || product.variantCount || 0;
   score += Math.min(variantCount * 2, 10);
+
+  // Title quality: longer descriptive titles = better product
+  const titleLen = (product.productNameEn || "").length;
+  if (titleLen > 30) score += 5;
 
   return Math.round(score * 10) / 10;
 }
