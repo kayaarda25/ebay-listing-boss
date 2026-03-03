@@ -646,7 +646,7 @@ async function handleListingsPublish(ctx: ApiContext, req: Request): Promise<Res
       price,
       quantity: quantity || 1,
       category_id: categoryId || null,
-      state: "draft",
+      state: "approved",
       source_url: sp.source_type === "cjdropshipping" ? `https://cjdropshipping.com` : null,
     })
     .select()
@@ -818,7 +818,7 @@ async function handleAutopilotRun(ctx: ApiContext, req: Request): Promise<Respon
           .from("ebay_offers")
           .select("id")
           .eq("seller_id", ctx.sellerId)
-          .eq("state", "draft")
+          .eq("state", "approved")
           .is("listing_id", null)
           .limit(remaining);
 
@@ -857,7 +857,7 @@ async function handleAutopilotRun(ctx: ApiContext, req: Request): Promise<Respon
         },
         body: JSON.stringify({
           sellerId: ctx.sellerId,
-          maxProducts: 20,
+          maxProducts: 10,
         }),
       });
       const discData = await res.json();
@@ -972,9 +972,9 @@ async function handleDiscoveryRun(ctx: ApiContext, req: Request): Promise<Respon
     },
     body: JSON.stringify({
       sellerId: ctx.sellerId,
-      maxProducts: body.maxProducts || 20,
+      maxProducts: body.maxProducts || 10,
       queries: body.queries,
-      skipListing: body.skipListing || false,
+      skipListing: body.skipListing ?? true,
     }),
   });
 

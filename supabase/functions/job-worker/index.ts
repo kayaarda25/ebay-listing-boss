@@ -443,13 +443,14 @@ async function processListingPublish(supabase: any, job: any): Promise<any> {
 
   const { data: offer } = await supabase
     .from("ebay_offers")
-    .select("id, listing_id")
+    .select("id, listing_id, state, sku")
     .eq("id", offerId)
     .eq("seller_id", job.seller_id)
     .maybeSingle();
 
   if (!offer) throw new Error("Offer not found");
   if (offer.listing_id) return { message: "Already published", listingId: offer.listing_id };
+  if (offer.state !== "approved") return { message: `Skipped: offer ${offer.sku} is not approved`, skipped: true };
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -490,7 +491,7 @@ async function processAutopilotDiscovery(supabase: any, job: any): Promise<any> 
     },
     body: JSON.stringify({
       sellerId: job.seller_id,
-      maxProducts: 20,
+      maxProducts: 10,
     }),
   });
   const data = await res.json();
