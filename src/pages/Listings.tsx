@@ -18,7 +18,7 @@ const ListingsPage = () => {
   const { sellerId } = useAuth();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("draft");
+  const [statusFilter, setStatusFilter] = useState<string>("approved");
   const [createOpen, setCreateOpen] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -163,7 +163,7 @@ const ListingsPage = () => {
             />
           </div>
           <div className="flex items-center gap-1 bg-card border border-border/60 rounded-xl p-1">
-            {["all", "draft", "active", "published", "paused"].map((s) => (
+            {["all", "approved", "active", "published", "paused"].map((s) => (
               <button
                 key={s}
                 onClick={() => setStatusFilter(s)}
