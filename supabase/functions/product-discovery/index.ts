@@ -183,6 +183,12 @@ Deno.serve(async (req) => {
               continue;
             }
 
+            // Skip duplicate PID already discovered in this run
+            if (discovered.some((d) => d.pid === p.pid)) {
+              console.log(`Skipping duplicate PID in batch: ${p.pid}`);
+              continue;
+            }
+
             // Check if already imported (exact match)
             const { data: existing } = await supabase
               .from("source_products")
@@ -211,10 +217,10 @@ Deno.serve(async (req) => {
                   return true;
                 }
                 // Check image overlap
-                const existingImages = Array.isArray(sp.images_json) ? sp.images_json : [];
-                const newImages = p.productImageSet || (p.productImage ? [p.productImage] : []);
+                const existingImages = normalizeImageUrls(sp.images_json);
+                const newImages = normalizeImageUrls([p.productImageSet, p.productImage]);
                 const sharedImages = newImages.filter((img: string) => existingImages.includes(img));
-                if (sharedImages.length > 0 && sharedImages.length >= newImages.length * 0.5) {
+                if (newImages.length > 0 && sharedImages.length >= Math.ceil(newImages.length * 0.5)) {
                   console.log(`Skipping duplicate (${sharedImages.length} shared images): "${(p.productNameEn || "").substring(0, 50)}"`);
                   return true;
                 }
@@ -236,12 +242,15 @@ Deno.serve(async (req) => {
               }
             }
 
-            // Get ALL images from detail API (much more than list API)
-            const detailImages = detailProduct?.productImageSet 
-              ? [...detailProduct.productImageSet, ...(detailProduct.productImage && !detailProduct.productImageSet.includes(detailProduct.productImage) ? [detailProduct.productImage] : [])]
-              : (detailProduct?.productImage ? [detailProduct.productImage] : []);
-            const listImages = p.productImageSet || (p.productImage ? [p.productImage] : []);
-            // Merge detail + list images, deduplicated
+            // Get ALL images from detail + list API (normalized + deduplicated)
+            const detailImages = normalizeImageUrls([
+              detailProduct?.productImageSet,
+              detailProduct?.productImage,
+            ]);
+            const listImages = normalizeImageUrls([
+              p.productImageSet,
+              p.productImage,
+            ]);
             const allImages = [...new Set([...detailImages, ...listImages])];
             const goodImages = filterImages(allImages);
             if (goodImages.length < MIN_IMAGES) continue;
@@ -387,40 +396,47 @@ Deno.serve(async (req) => {
           active: true,
         }, { onConflict: "seller_id,ebay_sku" });
 
-        // Create listing draft if not skipping
+        // Create/update listing draft if not skipping
         if (!skipListing) {
-          // Build title with EU badge
-          const listingTitle = euTags.length > 0
-            ? `${optimizedTitle}`.substring(0, 80)
-            : optimizedTitle.substring(0, 80);
+          const listingTitle = optimizedTitle.substring(0, 80);
 
-          // Append EU shipping info to description
-          const fullDescription = euTags.length > 0
-            ? `${description}\n\n🚀 ${euTags.join(" | ")}`
-            : description;
-
-          const { data: offer } = await supabase
+          // Prevent duplicate offers per SKU
+          const { data: existingOffer } = await supabase
             .from("ebay_offers")
-            .insert({
-              seller_id: sellerId,
-              sku: product.pid,
-              title: listingTitle,
-              price: sellingPrice,
-              quantity: 5,
-              state: "draft",
-              source_url: "https://cjdropshipping.com",
-            })
-            .select("id")
-            .single();
+            .select("id, state")
+            .eq("seller_id", sellerId)
+            .eq("sku", product.pid)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
-          // Queue publish job
-          if (offer) {
-            await supabase.from("jobs").insert({
-              seller_id: sellerId,
-              type: "listing_publish",
-              input: { offerId: offer.id },
-              state: "queued",
-            });
+          if (existingOffer) {
+            const preservedState = ["published", "active", "approved"].includes(existingOffer.state)
+              ? existingOffer.state
+              : "draft";
+
+            await supabase
+              .from("ebay_offers")
+              .update({
+                title: listingTitle,
+                price: sellingPrice,
+                quantity: 5,
+                state: preservedState,
+                source_url: "https://cjdropshipping.com",
+              })
+              .eq("id", existingOffer.id);
+          } else {
+            await supabase
+              .from("ebay_offers")
+              .insert({
+                seller_id: sellerId,
+                sku: product.pid,
+                title: listingTitle,
+                price: sellingPrice,
+                quantity: 5,
+                state: "draft",
+                source_url: "https://cjdropshipping.com",
+              });
           }
         }
 
@@ -477,6 +493,39 @@ function calculateScore(product: any, price: number, shippingCost: number, wareh
   if (titleLen > 30) score += 5;
 
   return Math.round(score * 10) / 10;
+}
+
+function normalizeImageUrls(input: unknown): string[] {
+  const out: string[] = [];
+
+  const collect = (value: unknown) => {
+    if (value == null) return;
+
+    if (Array.isArray(value)) {
+      for (const v of value) collect(v);
+      return;
+    }
+
+    if (typeof value !== "string") return;
+
+    const trimmed = value.trim();
+    if (!trimmed) return;
+
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        collect(parsed);
+        return;
+      } catch {
+        // fall through and treat as normal string
+      }
+    }
+
+    if (trimmed.startsWith("http")) out.push(trimmed);
+  };
+
+  collect(input);
+  return [...new Set(out)];
 }
 
 function filterImages(images: string[]): string[] {
