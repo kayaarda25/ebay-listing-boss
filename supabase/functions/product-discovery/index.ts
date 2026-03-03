@@ -183,7 +183,7 @@ Deno.serve(async (req) => {
               continue;
             }
 
-            // Check if already imported
+            // Check if already imported (exact match)
             const { data: existing } = await supabase
               .from("source_products")
               .select("id")
@@ -191,6 +191,50 @@ Deno.serve(async (req) => {
               .eq("seller_id", sellerId)
               .maybeSingle();
             if (existing) continue;
+
+            // Check for duplicates: similar title already in DB
+            const titleWords = extractKeywords(p.productNameEn || p.productName || "");
+            if (titleWords.length >= 2) {
+              const { data: similarProducts } = await supabase
+                .from("source_products")
+                .select("id, title, images_json")
+                .eq("seller_id", sellerId)
+                .ilike("title", `%${titleWords[0]}%`);
+              
+              const isDuplicate = (similarProducts || []).some((sp: any) => {
+                const similarity = calculateTitleSimilarity(
+                  (p.productNameEn || p.productName || "").toLowerCase(),
+                  (sp.title || "").toLowerCase()
+                );
+                if (similarity >= 0.65) {
+                  console.log(`Skipping duplicate (title ${Math.round(similarity * 100)}% similar): "${(p.productNameEn || "").substring(0, 50)}" ~ "${(sp.title || "").substring(0, 50)}"`);
+                  return true;
+                }
+                // Check image overlap
+                const existingImages = Array.isArray(sp.images_json) ? sp.images_json : [];
+                const newImages = p.productImageSet || (p.productImage ? [p.productImage] : []);
+                const sharedImages = newImages.filter((img: string) => existingImages.includes(img));
+                if (sharedImages.length > 0 && sharedImages.length >= newImages.length * 0.5) {
+                  console.log(`Skipping duplicate (${sharedImages.length} shared images): "${(p.productNameEn || "").substring(0, 50)}"`);
+                  return true;
+                }
+                return false;
+              });
+              if (isDuplicate) continue;
+
+              // Also check against already-discovered products in this batch
+              const batchDup = discovered.some(d => {
+                const sim = calculateTitleSimilarity(
+                  (p.productNameEn || p.productName || "").toLowerCase(),
+                  d.name.toLowerCase()
+                );
+                return sim >= 0.65;
+              });
+              if (batchDup) {
+                console.log(`Skipping batch duplicate: "${(p.productNameEn || "").substring(0, 50)}"`);
+                continue;
+              }
+            }
 
             // Get ALL images from detail API (much more than list API)
             const detailImages = detailProduct?.productImageSet 
@@ -558,6 +602,25 @@ function buildFallbackDescription(productName: string, title: string): string {
 </ul><br>
 <b>📦 Lieferumfang:</b><br>
 <ul><li>1x ${productName}</li></ul>`;
+}
+
+function extractKeywords(name: string): string[] {
+  const stopWords = new Set(["the", "a", "an", "for", "and", "or", "with", "in", "of", "to", "set", "pcs", "new", "hot"]);
+  return name.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !stopWords.has(w));
+}
+
+function calculateTitleSimilarity(a: string, b: string): number {
+  const wordsA = new Set(extractKeywords(a));
+  const wordsB = new Set(extractKeywords(b));
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  let shared = 0;
+  for (const w of wordsA) {
+    if (wordsB.has(w)) shared++;
+  }
+  return shared / Math.max(wordsA.size, wordsB.size);
 }
 
 function jsonRes(data: any, status = 200) {
