@@ -18,7 +18,7 @@ const ListingsPage = () => {
   const { sellerId } = useAuth();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("draft");
   const [createOpen, setCreateOpen] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);

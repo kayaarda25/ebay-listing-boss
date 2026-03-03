@@ -263,7 +263,7 @@ function buildAuctionItemBody({
   `;
 }
 
-async function publishAuctionListing(params: PublishAuctionListingParams): Promise<string> {
+async function publishAuctionListing(params: PublishAuctionListingParams, retryCount = 0): Promise<string> {
   try {
     return await ebayTradingCall({
       callName: "AddFixedPriceItem",
@@ -272,18 +272,109 @@ async function publishAuctionListing(params: PublishAuctionListingParams): Promi
     });
   } catch (error) {
     const message = String(error);
-    const needsCondition = message.includes("Artikelzustand ist für diese Kategorie erforderlich");
 
-    if (!needsCondition || params.conditionId) {
-      throw error;
+    // Auto-fix: missing ConditionID
+    const needsCondition = message.includes("Artikelzustand ist für diese Kategorie erforderlich");
+    if (needsCondition && !params.conditionId) {
+      console.log("Auto-fix: adding ConditionID 1000 and retrying...");
+      return publishAuctionListing({ ...params, conditionId: "1000" }, retryCount);
     }
 
-    return ebayTradingCall({
-      callName: "AddFixedPriceItem",
-      body: buildAuctionItemBody({ ...params, conditionId: "1000" }),
-      sellerId: params.sellerId,
-    });
+    // Auto-fix: missing required item specifics (Produktmerkmale)
+    const isMissingSpecifics =
+      message.includes("Produktmerkmale") ||
+      message.includes("Item Specific") ||
+      message.includes("item specific") ||
+      message.includes("erforderlich") && message.includes("Merkmal");
+
+    if (isMissingSpecifics && retryCount < 2) {
+      console.log(`Auto-fix: detecting missing item specifics for category ${params.categoryId} (attempt ${retryCount + 1})...`);
+      try {
+        const enrichedSpecifics = await fetchAndBuildRequiredSpecifics(params.categoryId, params.itemSpecifics, params.sellerId);
+        if (enrichedSpecifics !== params.itemSpecifics) {
+          console.log("Retrying with enriched item specifics...");
+          return publishAuctionListing({ ...params, itemSpecifics: enrichedSpecifics }, retryCount + 1);
+        }
+      } catch (specErr) {
+        console.warn("Failed to auto-fetch required specifics:", String(specErr));
+      }
+    }
+
+    throw error;
   }
+}
+
+/** Fetch required item specifics for a category from eBay and merge with existing ones */
+async function fetchAndBuildRequiredSpecifics(categoryId: string, existingSpecifics: string, sellerId?: string): Promise<string> {
+  const xml = await ebayTradingCall({
+    callName: "GetCategorySpecifics",
+    sellerId,
+    body: `
+      <CategorySpecific>
+        <CategoryID>${categoryId}</CategoryID>
+      </CategorySpecific>
+      <MaxValuesPerName>1</MaxValuesPerName>
+    `,
+  });
+
+  // Parse existing specifics names to avoid duplicates
+  const existingNames = new Set<string>();
+  const nameMatches = existingSpecifics.matchAll(/<Name>([^<]+)<\/Name>/g);
+  for (const m of nameMatches) {
+    existingNames.add(m[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'"));
+  }
+
+  // Find required specifics from the response
+  const recommendations = xmlBlocks(xml, "NameRecommendation");
+  const newSpecs: string[] = [];
+
+  for (const rec of recommendations) {
+    const usage = xmlValue(rec, "ValidationRules")?.includes("Required") || rec.includes("<UsageConstraint>Required</UsageConstraint>") || rec.includes("MinValues>1</MinValues");
+    const name = xmlValue(rec, "Name");
+    if (!name || existingNames.has(name)) continue;
+
+    // Only add if truly required
+    const isRequired = rec.includes("Required") || rec.includes("<MinValues>1</MinValues>");
+    if (!isRequired) continue;
+
+    // Try to get a recommended value, fallback to generic
+    const valueMatch = rec.match(/<Value><Value>([^<]+)<\/Value>/);
+    let value = valueMatch?.[1] || "Nicht zutreffend";
+
+    // Smart defaults for common specifics
+    const nameLower = name.toLowerCase();
+    if (nameLower.includes("marke") || nameLower.includes("brand")) value = "Markenlos";
+    else if (nameLower.includes("herstellernummer") || nameLower.includes("mpn")) value = "Nicht zutreffend";
+    else if (nameLower.includes("ean") || nameLower.includes("gtin")) value = "Nicht zutreffend";
+    else if (nameLower.includes("herkunft") || nameLower.includes("herstellungsland")) value = "China";
+    else if (nameLower.includes("material")) value = "Kunststoff";
+    else if (nameLower.includes("farbe") || nameLower.includes("colour") || nameLower.includes("color")) value = "Mehrfarbig";
+    else if (nameLower.includes("größe") || nameLower.includes("size")) value = "Einheitsgröße";
+    else if (nameLower.includes("stil") || nameLower.includes("style")) value = "Modern";
+    else if (nameLower.includes("typ") || nameLower.includes("type") || nameLower.includes("produktart")) value = "Universell";
+    else if (nameLower.includes("abteilung") || nameLower.includes("department")) value = "Unisex Erwachsene";
+    else if (nameLower.includes("zimmer") || nameLower.includes("room")) value = "Wohnzimmer";
+    else if (nameLower.includes("anlass") || nameLower.includes("occasion")) value = "Alltag";
+    else if (nameLower.includes("muster") || nameLower.includes("pattern")) value = "Ohne Muster";
+    else if (nameLower.includes("stromquelle") || nameLower.includes("power")) value = "Elektrisch";
+    else if (nameLower.includes("spannung") || nameLower.includes("voltage")) value = "220V";
+
+    console.log(`Adding required specific: ${name} = ${value}`);
+    newSpecs.push(`
+      <NameValueList>
+        <Name>${escapeXml(name)}</Name>
+        <Value>${escapeXml(value.substring(0, 65))}</Value>
+      </NameValueList>`);
+  }
+
+  if (newSpecs.length === 0) return existingSpecifics;
+
+  // Merge: insert new specs into existing ItemSpecifics block
+  if (existingSpecifics.includes("</ItemSpecifics>")) {
+    return existingSpecifics.replace("</ItemSpecifics>", newSpecs.join("") + "</ItemSpecifics>");
+  }
+
+  return `<ItemSpecifics>${existingSpecifics.replace(/<\/?ItemSpecifics>/g, "")}${newSpecs.join("")}</ItemSpecifics>`;
 }
 
 /** Verify listing – always includes ConditionID to avoid spurious errors */
